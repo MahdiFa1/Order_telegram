@@ -15,7 +15,7 @@ backups
 .env
 .env.*
 !.env.example
-docker-compose.yml
+docker-compose.yaml
 install.sh
 update.sh
 backup.sh

@@ -319,7 +319,7 @@ python -m app.main
 2. **Add Resource** — inside the project, *+ New Resource*.
 3. **Connect Git Repository** — pick your Git source and this repository/branch.
 4. **Select Docker Compose** — build pack *Docker Compose*, compose file
-   `docker-compose.yml`.
+   `docker-compose.yaml`.
 5. **Add Environment Variables** — at minimum:
    ```
    BOT_TOKEN=<token from BotFather>
