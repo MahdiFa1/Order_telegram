@@ -17,6 +17,15 @@ services:
     volumes:
       # Named volume => orders survive every redeploy and container rebuild.
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      default:
+        # DATABASE_URL dials the host "postgres". Compose derives that name
+        # from the service key, but platforms that rewrite service or
+        # container names (Coolify appends a resource id) break it, and the
+        # bot then fails DNS with "Name or service not known". An explicit
+        # alias pins the name regardless of any renaming.
+        aliases:
+          - postgres
     healthcheck:
       # Block sequence, not a flow sequence on the following line: the Go
       # parser in `docker compose` accepts both, but stricter YAML parsers
@@ -55,10 +64,16 @@ services:
       RUN_MIGRATIONS_ON_START: ${RUN_MIGRATIONS_ON_START:-true}
       TELEGRAM_MAX_RETRIES: ${TELEGRAM_MAX_RETRIES:-3}
       ADMIN_NOTIFICATION_COOLDOWN: ${ADMIN_NOTIFICATION_COOLDOWN:-300}
+    networks:
+      - default
     expose:
       - "8080"
     # Give the bot time to finish an in-flight dispatch before SIGKILL.
     stop_grace_period: 30s
+
+networks:
+  default:
+    driver: bridge
 
 volumes:
   postgres_data:

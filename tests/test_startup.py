@@ -504,3 +504,25 @@ async def test_update_ledger_is_pruned_at_startup(session_factory):
     async with session_scope() as session:
         remaining = await session.execute(select(func.count()).select_from(ProcessedUpdate))
         assert remaining.scalar_one() == 1
+
+
+async def test_compose_pins_the_database_hostname_with_an_alias():
+    """DATABASE_URL dials 'postgres'; platforms that rename services break
+    that unless the alias is declared explicitly."""
+    from pathlib import Path
+    from urllib.parse import urlsplit
+
+    yaml = pytest.importorskip("yaml")
+    root = Path(__file__).resolve().parents[1]
+    parsed = yaml.safe_load((root / "docker-compose.yaml").read_text())
+
+    aliases = parsed["services"]["postgres"]["networks"]["default"]["aliases"]
+    dsn = parsed["services"]["bot"]["environment"]["DATABASE_URL"]
+    host = urlsplit(dsn.replace("${POSTGRES_PASSWORD}", "pw")).hostname
+
+    assert host in aliases, (
+        f"the bot dials {host!r} but postgres only answers to {aliases}"
+    )
+    # Both services must sit on the network that alias belongs to.
+    assert "default" in parsed["services"]["bot"]["networks"]
+    assert "default" in parsed["networks"]
