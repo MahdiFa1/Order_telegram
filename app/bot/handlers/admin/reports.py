@@ -16,7 +16,7 @@ from app.bot.keyboards.callbacks import Nav, ReportCB
 from app.bot.keyboards.common import back_keyboard
 from app.bot.states.admin import CustomRange
 from app.database.engine import session_scope
-from app.database.repositories import SourceChannelRepository
+from app.database.repositories import SourceChannelRepository, WorkGroupRepository
 from app.reports.service import ReportPeriod
 from app.services.container import Services
 
@@ -74,6 +74,25 @@ async def show_sources(callback: CallbackQuery, services: Services) -> None:
         report = await services.reports.order_report(period, source_channel_id=source.id)
         lines.append(
             f"<b>{source.title or source.chat_id}</b>\n"
+            f"  Total {report.total} · ✅ {report.success} · ❌ {report.failed} · "
+            f"⏳ {report.pending} · ⚠️ {report.conflict}\n"
+            f"  Success rate {report.success_rate:.2f}%"
+        )
+    await render(callback, "\n".join(lines), report_result_keyboard())
+
+
+@router.callback_query(ReportCB.filter(F.action == "workgroups"), IsAdmin())
+async def show_work_groups(callback: CallbackQuery, services: Services) -> None:
+    period = ReportPeriod.today()
+    async with session_scope() as session:
+        groups = await WorkGroupRepository(session).list_all()
+    lines = [f"👥 <b>By Work Group — {period.label}</b>", ""]
+    if not groups:
+        lines.append("No work group configured.")
+    for group in groups:
+        report = await services.reports.order_report(period, work_group_id=group.id)
+        lines.append(
+            f"<b>{group.title or group.chat_id}</b>\n"
             f"  Total {report.total} · ✅ {report.success} · ❌ {report.failed} · "
             f"⏳ {report.pending} · ⚠️ {report.conflict}\n"
             f"  Success rate {report.success_rate:.2f}%"

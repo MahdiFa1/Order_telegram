@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Sequence
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -102,13 +103,21 @@ class ReportService:
         *,
         source_channel_id: int | None = None,
         operator_user_id: int | None = None,
+        work_group_id: int | None = None,
+        statuses: Sequence[OrderStatus] | None = None,
     ) -> OrderReport:
+        """Report for a period, optionally narrowed by source, work group,
+        operator and status."""
         start, end = range_bounds_utc(period.first_day, period.last_day)
         async with session_scope() as session:
             orders = OrderRepository(session)
             counts = await orders.count_by_status(
-                start, end, source_channel_id=source_channel_id,
+                start,
+                end,
+                source_channel_id=source_channel_id,
                 operator_user_id=operator_user_id,
+                work_group_id=work_group_id,
+                statuses=statuses,
             )
             average = await orders.average_completion_seconds(
                 start, end, operator_user_id=operator_user_id

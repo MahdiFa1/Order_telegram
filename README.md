@@ -127,7 +127,7 @@ app/
 ├── config/                   # settings
 └── utils/                    # enums, time, logging
 
-tests/                        # 158 tests against a real PostgreSQL
+tests/                        # 161 tests against a real PostgreSQL
 alembic/                      # migrations
 docker/entrypoint.sh          # wait for DB → migrate → exec app
 ```
@@ -549,6 +549,7 @@ Coverage includes every scenario the specification requires:
 | Every admin keyboard packs, fits 64 bytes and round-trips | `test_every_keyboard_builds_and_round_trips` |
 | Route resolution explains why an order goes nowhere | `test_resolver_explains_a_disabled_route` |
 | Env super admins cannot be demoted or removed | `test_env_super_admin_cannot_be_removed` |
+| Reports filter by source, work group, operator and status | `test_report_can_be_filtered_by_work_group` |
 
 ---
 

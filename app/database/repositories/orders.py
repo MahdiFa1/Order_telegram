@@ -509,7 +509,11 @@ class OrderRepository(BaseRepository):
         end: datetime,
         source_channel_id: int | None = None,
         operator_user_id: int | None = None,
+        work_group_id: int | None = None,
+        statuses: Sequence[OrderStatus] | None = None,
     ) -> dict[str, int]:
+        """Status histogram for a period, narrowed by any combination of
+        source channel, work group, completing operator and status."""
         stmt = (
             select(Order.status, func.count())
             .where(Order.created_at >= start, Order.created_at < end)
@@ -519,6 +523,16 @@ class OrderRepository(BaseRepository):
             stmt = stmt.where(Order.source_channel_id == source_channel_id)
         if operator_user_id is not None:
             stmt = stmt.where(Order.completed_by_user_id == operator_user_id)
+        if work_group_id is not None:
+            stmt = stmt.where(
+                Order.id.in_(
+                    select(OrderDelivery.order_id).where(
+                        OrderDelivery.work_group_id == work_group_id
+                    )
+                )
+            )
+        if statuses is not None:
+            stmt = stmt.where(Order.status.in_([s.value for s in statuses]))
         result = await self.session.execute(stmt)
         counts = {status.value: 0 for status in OrderStatus}
         for status, count in result.all():

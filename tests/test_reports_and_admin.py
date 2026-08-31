@@ -234,3 +234,78 @@ async def test_duplicate_update_ledger_claims_once(services):
         assert await repo.mark_update_processed("update:1") is True
     async with session_scope() as session:
         assert await OrderRepository(session).mark_update_processed("update:1") is False
+
+
+async def test_report_can_be_filtered_by_work_group(services):
+    """Spec §61: the report structure supports source / work group /
+    operator / status filters."""
+    from app.database.repositories import (
+        RouteRepository,
+        SourceChannelRepository,
+        WorkGroupRepository,
+    )
+    from tests.conftest import WORK_GROUP_CHAT_ID
+
+    other_group_chat = -1002000000200
+    async with session_scope() as session:
+        source = await SourceChannelRepository(session).add(SOURCE_CHAT_ID, "Src")
+        group_a = await WorkGroupRepository(session).add(WORK_GROUP_CHAT_ID, "WG A")
+        group_b = await WorkGroupRepository(session).add(other_group_chat, "WG B")
+        await RouteRepository(session).add(source.id, group_a.id)
+        group_a_id, group_b_id = group_a.id, group_b.id
+
+    await deliver_order(services, text_payload(SOURCE_CHAT_ID, "routed to A only"))
+
+    in_a = await services.reports.order_report(
+        ReportPeriod.today(), work_group_id=group_a_id
+    )
+    in_b = await services.reports.order_report(
+        ReportPeriod.today(), work_group_id=group_b_id
+    )
+    assert in_a.total == 1
+    assert in_b.total == 0
+
+
+async def test_report_can_be_filtered_by_status(destinations):
+    services = destinations
+    await _finalise(services, OrderStatus.SUCCESS)
+    await _finalise(services, OrderStatus.FAILED)
+    await deliver_order(services, text_payload(SOURCE_CHAT_ID, "still pending"))
+
+    only_success = await services.reports.order_report(
+        ReportPeriod.today(), statuses=[OrderStatus.SUCCESS]
+    )
+    assert only_success.total == 1
+    assert only_success.success == 1
+    assert only_success.failed == 0
+    assert only_success.pending == 0
+
+
+async def test_report_can_be_filtered_by_source(destinations):
+    from app.database.repositories import (
+        RouteRepository,
+        SourceChannelRepository,
+        WorkGroupRepository,
+    )
+    from tests.conftest import WORK_GROUP_CHAT_ID
+
+    services = destinations
+    second_source = -1001000000300
+    async with session_scope() as session:
+        other = await SourceChannelRepository(session).add(second_source, "Src B")
+        group = await WorkGroupRepository(session).get_by_chat_id(WORK_GROUP_CHAT_ID)
+        await RouteRepository(session).add(other.id, group.id)
+        first = await SourceChannelRepository(session).get_by_chat_id(SOURCE_CHAT_ID)
+        first_id, other_id = first.id, other.id
+
+    await deliver_order(services, text_payload(SOURCE_CHAT_ID, "from A"))
+    await deliver_order(services, text_payload(second_source, "from B"))
+    await deliver_order(services, text_payload(second_source, "from B again"))
+
+    from_a = await services.reports.order_report(
+        ReportPeriod.today(), source_channel_id=first_id
+    )
+    from_b = await services.reports.order_report(
+        ReportPeriod.today(), source_channel_id=other_id
+    )
+    assert (from_a.total, from_b.total) == (1, 2)

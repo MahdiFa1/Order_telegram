@@ -468,7 +468,10 @@ def reports_menu() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text="📥 By Source", callback_data=ReportCB(action="sources").pack()
-        )
+        ),
+        InlineKeyboardButton(
+            text="👥 By Work Group", callback_data=ReportCB(action="workgroups").pack()
+        ),
     )
     builder.row(back_button("main"))
     return builder.as_markup()
