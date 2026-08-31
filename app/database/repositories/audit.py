@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import AuditLog, NotificationThrottle
 from app.database.repositories.base import BaseRepository
@@ -55,19 +57,26 @@ class AuditRepository(BaseRepository):
         return list(result.scalars())
 
     async def should_notify(self, key: str, cooldown_seconds: int) -> bool:
-        """Spam protection for admin notifications."""
+        """Spam protection for admin notifications.
+
+        A single atomic upsert claims the slot: the row is only updated when
+        the cooldown has elapsed, so concurrent workers (and repeated calls
+        inside one session) cannot both decide to send.
+        """
         now = utcnow()
-        result = await self.session.execute(
-            select(NotificationThrottle).where(NotificationThrottle.notification_key == key)
+        cutoff = now - timedelta(seconds=cooldown_seconds)
+        stmt = (
+            insert(NotificationThrottle)
+            .values(notification_key=key, last_sent_at=now)
+            .on_conflict_do_update(
+                index_elements=[NotificationThrottle.notification_key],
+                set_={"last_sent_at": now},
+                where=NotificationThrottle.last_sent_at < cutoff,
+            )
+            .returning(NotificationThrottle.id)
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            self.session.add(NotificationThrottle(notification_key=key, last_sent_at=now))
-            return True
-        if (now - row.last_sent_at).total_seconds() < cooldown_seconds:
-            return False
-        row.last_sent_at = now
-        return True
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
 
 def _jsonable(value: Any) -> Any:
