@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import operator_detail, operator_list
@@ -33,23 +34,23 @@ async def _show_list(callback: CallbackQuery) -> None:
     async with session_scope() as session:
         operators = await OperatorRepository(session).list_all()
     if operators:
-        lines = ["👤 <b>Operators</b>", "", "Only these users can change an order's status.", ""]
+        lines = [t.OPERATORS_TITLE, "", t.OPERATORS_INTRO, ""]
         for operator in operators:
             name = operator.display_name or (
                 f"@{operator.username}" if operator.username else str(operator.telegram_user_id)
             )
-            scope = "all groups" if operator.all_work_groups else "selected groups"
+            scope = (
+                t.OPERATOR_SCOPE_ALL
+                if operator.all_work_groups
+                else t.OPERATOR_SCOPE_SELECTED
+            )
             lines.append(
                 f"{'🟢' if operator.enabled else '🔴'} <b>{name}</b>\n"
                 f"    <code>{operator.telegram_user_id}</code> · {scope}"
             )
         text = "\n".join(lines)
     else:
-        text = (
-            "👤 <b>Operators</b>\n\n"
-            "No operator configured. Until one is added, replies and reactions "
-            "in work groups will not change any order's status."
-        )
+        text = t.OPERATORS_EMPTY
     await render(callback, text, operator_list(operators))
 
 
@@ -58,8 +59,7 @@ async def prompt_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddOperator.waiting_for_user_id)
     await render(
         callback,
-        "Send the operator's numeric <b>Telegram user ID</b>.\n\n"
-        "They can get it by sending <code>/id</code> to this bot.",
+        t.ADD_OPERATOR_PROMPT,
         back_keyboard("operators"),
     )
 
@@ -70,7 +70,7 @@ async def receive_user_id(message: Message, state: FSMContext) -> None:
     try:
         user_id = int(raw)
     except ValueError:
-        await message.answer("❌ Send a numeric Telegram user ID.")
+        await message.answer(t.ADD_OPERATOR_INVALID)
         return
     async with session_scope() as session:
         operator = await OperatorRepository(session).add(user_id)
@@ -82,7 +82,7 @@ async def receive_user_id(message: Message, state: FSMContext) -> None:
         operators = await OperatorRepository(session).list_all()
     await state.clear()
     await message.answer(
-        f"✅ Operator <code>{operator.telegram_user_id}</code> added.",
+        t.OPERATOR_ADDED.format(user_id=operator.telegram_user_id),
         reply_markup=operator_list(operators),
     )
 
@@ -96,19 +96,21 @@ async def _render_detail(callback: CallbackQuery, operator_id: int) -> None:
     async with session_scope() as session:
         operator = await OperatorRepository(session).get(operator_id)
         if operator is None:
-            await callback.answer("Not found", show_alert=True)
+            await callback.answer(t.NOT_FOUND, show_alert=True)
             return
         groups = await WorkGroupRepository(session).list_all()
         assigned = {a.work_group_id for a in operator.assignments}
         name = operator.display_name or (
             f"@{operator.username}" if operator.username else str(operator.telegram_user_id)
         )
-        detail = (
-            f"👤 <b>{name}</b>\n\n"
-            f"User ID: <code>{operator.telegram_user_id}</code>\n"
-            f"Status: {'🟢 Enabled' if operator.enabled else '🔴 Disabled'}\n"
-            f"Scope: {'All work groups' if operator.all_work_groups else 'Selected work groups'}\n"
-            f"Assigned groups: {len(assigned)}"
+        detail = t.OPERATOR_DETAIL.format(
+            name=name,
+            user_id=operator.telegram_user_id,
+            status=t.toggle_text(operator.enabled),
+            scope=t.OPERATOR_SCOPE_ALL
+            if operator.all_work_groups
+            else t.OPERATOR_SCOPE_SELECTED,
+            assigned=t.fa_digits(len(assigned)),
         )
         markup = operator_detail(operator, groups, assigned)
     await render(callback, detail, markup)
@@ -139,7 +141,7 @@ async def toggle_assignment(callback: CallbackQuery, callback_data: OperatorCB) 
         repo = OperatorRepository(session)
         operator = await repo.get(callback_data.id)
         if operator is None:
-            await callback.answer("Not found", show_alert=True)
+            await callback.answer(t.NOT_FOUND, show_alert=True)
             return
         assigned = {a.work_group_id for a in operator.assignments}
         if callback_data.arg in assigned:

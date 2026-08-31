@@ -11,6 +11,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.admin import strings as t
 from app.bot.filters import IsAdmin, IsSuperAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import admin_detail, admin_list
@@ -23,12 +24,7 @@ from app.utils.enums import AdminRole, AuditEvent
 
 router = Router(name="admin_admins")
 
-_LIST_HEADER = (
-    "👮 <b>Admins</b>\n\n"
-    "👑 Super Admin — full access, including this screen.\n"
-    "👮 Admin — everything except managing admins.\n"
-    "🔒 — defined in <code>SUPERADMIN_IDS</code>; cannot be changed here.\n"
-)
+_LIST_HEADER = t.ADMINS_HEADER
 
 
 @router.callback_query(AdminCB.filter(F.action == "list"), IsAdmin())
@@ -63,17 +59,19 @@ async def _render_detail(callback: CallbackQuery, admin_id: int) -> None:
     async with session_scope() as session:
         admin = await AdminRepository(session).get_by_user_id_pk(admin_id)
     if admin is None:
-        await callback.answer("Not found", show_alert=True)
+        await callback.answer(t.NOT_FOUND, show_alert=True)
         return
     name = admin.display_name or (
         f"@{admin.username}" if admin.username else str(admin.telegram_user_id)
     )
-    detail = (
-        f"{'👑' if admin.role == AdminRole.SUPER_ADMIN else '👮'} <b>{name}</b>\n\n"
-        f"User ID: <code>{admin.telegram_user_id}</code>\n"
-        f"Role: {admin.role}\n"
-        f"Status: {'🟢 Enabled' if admin.enabled else '🔴 Disabled'}\n"
-        f"Source: {'environment (locked)' if admin.from_env else 'admin panel'}"
+    is_super = admin.role == AdminRole.SUPER_ADMIN
+    detail = t.ADMIN_DETAIL.format(
+        badge="👑" if is_super else "👮",
+        name=name,
+        user_id=admin.telegram_user_id,
+        role=t.ROLE_SUPER_ADMIN if is_super else t.ROLE_ADMIN,
+        status=t.toggle_text(admin.enabled),
+        source=t.ADMIN_SOURCE_ENV if admin.from_env else t.ADMIN_SOURCE_PANEL,
     )
     await render(callback, detail, admin_detail(admin))
 
@@ -83,9 +81,7 @@ async def prompt_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddAdmin.waiting_for_user_id)
     await render(
         callback,
-        "Send the numeric <b>Telegram user ID</b> to grant admin access.\n\n"
-        "They can read it by sending <code>/id</code> to this bot.\n"
-        "New entries are created as 👮 Admin; promote them afterwards if needed.",
+        t.ADD_ADMIN_PROMPT,
         back_keyboard("settings"),
     )
 
@@ -95,7 +91,7 @@ async def receive_user_id(message: Message, state: FSMContext) -> None:
     try:
         user_id = int((message.text or "").strip())
     except ValueError:
-        await message.answer("❌ Send a numeric Telegram user ID.")
+        await message.answer(t.ADD_OPERATOR_INVALID)
         return
     async with session_scope() as session:
         repo = AdminRepository(session)
@@ -108,7 +104,7 @@ async def receive_user_id(message: Message, state: FSMContext) -> None:
         admins = await repo.list_all()
     await state.clear()
     await message.answer(
-        f"✅ <code>{user_id}</code> can now open the admin panel.",
+        t.ADMIN_ADDED.format(user_id=user_id),
         reply_markup=admin_list(admins),
     )
 
@@ -119,13 +115,10 @@ async def toggle_role(callback: CallbackQuery, callback_data: AdminCB) -> None:
         repo = AdminRepository(session)
         admin = await repo.get_by_user_id_pk(callback_data.id)
         if admin is None:
-            await callback.answer("Not found", show_alert=True)
+            await callback.answer(t.NOT_FOUND, show_alert=True)
             return
         if admin.from_env:
-            await callback.answer(
-                "This super admin comes from SUPERADMIN_IDS and cannot be changed here.",
-                show_alert=True,
-            )
+            await callback.answer(t.ADMIN_LOCKED_ROLE, show_alert=True)
             return
         admin.role = (
             AdminRole.ADMIN
@@ -145,13 +138,10 @@ async def toggle_enabled(callback: CallbackQuery, callback_data: AdminCB) -> Non
     async with session_scope() as session:
         admin = await AdminRepository(session).get_by_user_id_pk(callback_data.id)
         if admin is None:
-            await callback.answer("Not found", show_alert=True)
+            await callback.answer(t.NOT_FOUND, show_alert=True)
             return
         if admin.from_env:
-            await callback.answer(
-                "This super admin comes from SUPERADMIN_IDS and cannot be disabled here.",
-                show_alert=True,
-            )
+            await callback.answer(t.ADMIN_LOCKED_DISABLE, show_alert=True)
             return
         admin.enabled = not admin.enabled
     await _render_detail(callback, callback_data.id)
@@ -163,10 +153,7 @@ async def delete_admin(callback: CallbackQuery, callback_data: AdminCB) -> None:
         repo = AdminRepository(session)
         removed = await repo.delete(callback_data.id)
         if not removed:
-            await callback.answer(
-                "Super admins defined in SUPERADMIN_IDS cannot be removed.",
-                show_alert=True,
-            )
+            await callback.answer(t.ADMIN_LOCKED_DELETE, show_alert=True)
             return
         await AuditRepository(session).log(
             AuditEvent.CONFIGURATION_CHANGED,
@@ -179,4 +166,4 @@ async def delete_admin(callback: CallbackQuery, callback_data: AdminCB) -> None:
 @router.callback_query(AdminCB.filter(), IsAdmin())
 async def super_admin_only(callback: CallbackQuery) -> None:
     """Any admin action not caught above needs Super Admin rights."""
-    await callback.answer("Only a Super Admin can change admin accounts.", show_alert=True)
+    await callback.answer(t.SUPER_ADMIN_ONLY, show_alert=True)

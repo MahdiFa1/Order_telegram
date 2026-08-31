@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.admin import texts
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import main_menu
@@ -32,10 +33,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_start_denied(message: Message) -> None:
     if message.chat.type != "private":
         return
-    await message.answer(
-        "⛔️ You are not authorised to use this bot's admin panel.\n"
-        "Ask a Super Admin to add your Telegram user ID."
-    )
+    await message.answer(t.ACCESS_DENIED)
 
 
 @router.message(Command("id"))
@@ -43,8 +41,7 @@ async def cmd_id(message: Message) -> None:
     """Convenience: tells anyone their user id and the current chat id."""
     user_id = message.from_user.id if message.from_user else "unknown"
     await message.answer(
-        f"👤 Your user ID: <code>{user_id}</code>\n"
-        f"💬 This chat ID: <code>{message.chat.id}</code>"
+        t.CMD_ID.format(user_id=user_id, chat_id=message.chat.id)
     )
 
 

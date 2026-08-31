@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.admin import strings as t
 from app.config import Settings
 from app.database.engine import session_scope
 from app.database.repositories import (
@@ -68,26 +69,22 @@ class AdminNotifier:
         number = await self._display_number(order_id)
         await self._send(
             f"dispatch_failed:{chat_id}",
-            f"⚠️ Order {number}\n\nResult dispatch failed.\n\n"
-            f"Destination:\n{chat_id}\n\nReason:\n{reason}",
+            t.NOTIFY_DISPATCH_FAILED.format(
+                number=number, chat_id=chat_id, reason=reason
+            ),
         )
 
     async def acknowledgement_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(
             "acknowledgement_failed",
-            f"⚠️ Order {number}\n\nResult successfully sent, "
-            f"but acknowledgement reaction failed.\n\nReason:\n{reason}",
+            t.NOTIFY_ACK_FAILED.format(number=number, reason=reason),
         )
 
     async def conflict_detected(self, order_id: int) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            f"conflict:{order_id}",
-            f"⚠️ Order {number}\n\nSuccess and failure rules matched at the same time.\n"
-            f"The order is on hold in CONFLICT: nothing was dispatched and no "
-            f"acknowledgement was applied.\n\nResolve it from "
-            f"⚙️ Admin Panel → 🔎 Find Order.",
+            f"conflict:{order_id}", t.NOTIFY_CONFLICT.format(number=number)
         )
 
     async def startup_completed(self, username: str | None, bot_id: int) -> None:
@@ -121,42 +118,48 @@ class AdminNotifier:
         blocking = [
             name
             for name, value in (
-                ("a source channel", sources),
-                ("a work group", work_groups),
-                ("a route between them", routes),
-                ("an operator", operators),
+                (t.STARTUP_MISSING_SOURCE, sources),
+                (t.STARTUP_MISSING_WORK_GROUP, work_groups),
+                (t.STARTUP_MISSING_ROUTE, routes),
+                (t.STARTUP_MISSING_OPERATOR, operators),
             )
             if not value
         ]
+        fa = t.fa_digits
 
         lines = [
-            "✅ <b>Bot started successfully</b>",
+            t.STARTUP_TITLE,
             "",
-            f"Bot: @{username} (<code>{bot_id}</code>)" if username else f"Bot id: {bot_id}",
-            "Database: connected",
-            f"Local time: {local_now():%Y-%m-%d %H:%M} ({self.settings.timezone})",
+            t.STARTUP_BOT.format(username=username, bot_id=bot_id)
+            if username
+            else t.STARTUP_BOT_NO_USERNAME.format(bot_id=bot_id),
+            t.STARTUP_DATABASE,
+            t.STARTUP_TIME.format(
+                time=fa(f"{local_now():%Y-%m-%d %H:%M}"),
+                timezone=self.settings.timezone,
+            ),
             "",
-            "<b>Configuration</b>",
-            f"{mark(sources)} Source channels: {sources}",
-            f"{mark(work_groups)} Work groups: {work_groups}",
-            f"{mark(routes)} Routes: {routes}",
-            f"{mark(operators)} Operators: {operators}",
-            f"{mark(success_targets)} Success destinations: {success_targets}",
-            f"{mark(failure_targets)} Failure destinations: {failure_targets}",
+            t.STARTUP_CONFIG_TITLE,
+            t.STARTUP_SOURCES.format(mark=mark(sources), count=fa(sources)),
+            t.STARTUP_WORK_GROUPS.format(mark=mark(work_groups), count=fa(work_groups)),
+            t.STARTUP_ROUTES.format(mark=mark(routes), count=fa(routes)),
+            t.STARTUP_OPERATORS.format(mark=mark(operators), count=fa(operators)),
+            t.STARTUP_SUCCESS_TARGETS.format(
+                mark=mark(success_targets), count=fa(success_targets)
+            ),
+            t.STARTUP_FAILURE_TARGETS.format(
+                mark=mark(failure_targets), count=fa(failure_targets)
+            ),
         ]
         if pending:
-            lines.append(f"⏳ Pending orders carried over: {pending}")
+            lines.append(t.STARTUP_PENDING.format(count=fa(pending)))
 
         lines.append("")
         if blocking:
-            lines.append(
-                "⚠️ <b>Not ready yet.</b> Orders cannot flow until you add "
-                + ", ".join(blocking)
-                + "."
-            )
-            lines.append("Send /start to open the admin panel and set them up.")
+            lines.append(t.STARTUP_NOT_READY.format(missing="، ".join(blocking)))
+            lines.append(t.STARTUP_NOT_READY_HINT)
         else:
-            lines.append("Everything required is configured. Send /start to manage it.")
+            lines.append(t.STARTUP_READY)
 
         text = "\n".join(lines)
         for user_id in recipients:
@@ -170,6 +173,5 @@ class AdminNotifier:
     async def route_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            "route_failed",
-            f"⚠️ Order {number}\n\nDelivery to the work group failed.\n\nReason:\n{reason}",
+            "route_failed", t.NOTIFY_ROUTE_FAILED.format(number=number, reason=reason)
         )

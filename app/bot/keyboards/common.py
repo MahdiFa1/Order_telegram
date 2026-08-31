@@ -5,11 +5,14 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.admin import strings as t
 from app.bot.keyboards.callbacks import Nav
 
 
-def back_button(section: str = "main", label: str = "⬅️ Back") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=label, callback_data=Nav(section=section).pack())
+def back_button(section: str = "main", label: str | None = None) -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=label or t.BTN_BACK, callback_data=Nav(section=section).pack()
+    )
 
 
 def back_keyboard(section: str = "main") -> InlineKeyboardMarkup:
@@ -19,7 +22,7 @@ def back_keyboard(section: str = "main") -> InlineKeyboardMarkup:
 
 
 def toggle_label(enabled: bool) -> str:
-    return "🟢 Enabled" if enabled else "🔴 Disabled"
+    return t.toggle_text(enabled)
 
 
 def toggle_icon(enabled: bool) -> str:
@@ -27,4 +30,4 @@ def toggle_icon(enabled: bool) -> str:
 
 
 def yes_no(value: bool) -> str:
-    return "YES" if value else "NO"
+    return t.yes_no(value)

@@ -48,6 +48,20 @@ ALLOWED_UPDATES = [
 UPDATE_LEDGER_RETENTION_DAYS = 7
 
 
+async def _publish_command_menu(bot: Bot) -> None:
+    """Show the command list in Telegram's own menu, in Persian."""
+    from aiogram.types import BotCommand
+
+    from app.admin import strings as t
+
+    try:
+        await bot.set_my_commands(
+            [BotCommand(command=name, description=text) for name, text in t.BOT_COMMANDS]
+        )
+    except Exception:  # noqa: BLE001 - cosmetic; never block startup
+        logger.warning("set_my_commands_failed")
+
+
 async def _purge_old_update_ledger() -> int:
     from datetime import timedelta
 
@@ -138,6 +152,7 @@ async def run(settings: Settings) -> None:
             ) from error
         services.bot_user_id = me.id
         health.bot_ready = True
+        await _publish_command_menu(bot)
         logger.info("bot_started", username=me.username, bot_id=me.id)
 
         # Finish anything a previous process left half-done before accepting

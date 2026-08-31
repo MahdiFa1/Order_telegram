@@ -8,6 +8,7 @@ from typing import Sequence
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.admin import strings as t
 from app.database.engine import session_scope
 from app.database.repositories import (
     AcknowledgementRepository,
@@ -29,22 +30,23 @@ class ReportPeriod:
     @classmethod
     def today(cls) -> "ReportPeriod":
         day = business_date()
-        return cls("Today", day, day)
+        return cls(t.PERIOD_TODAY, day, day)
 
     @classmethod
     def yesterday(cls) -> "ReportPeriod":
         day = business_date() - timedelta(days=1)
-        return cls("Yesterday", day, day)
+        return cls(t.PERIOD_YESTERDAY, day, day)
 
     @classmethod
     def last_days(cls, days: int) -> "ReportPeriod":
         last = business_date()
         first = last - timedelta(days=days - 1)
-        return cls(f"Last {days} Days", first, last)
+        return cls(t.PERIOD_LAST_DAYS.format(days=t.fa_digits(days)), first, last)
 
     @classmethod
     def custom(cls, first: date, last: date) -> "ReportPeriod":
-        return cls(f"{first.isoformat()} → {last.isoformat()}", first, last)
+        label = f"{t.fa_digits(first.isoformat())} تا {t.fa_digits(last.isoformat())}"
+        return cls(label, first, last)
 
 
 @dataclass(slots=True)

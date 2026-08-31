@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import parse_chat_id, render
 from app.bot.keyboards.admin import (
@@ -31,9 +32,9 @@ router = Router(name="admin_chats")
 
 _SECTION_FOR_KIND = {"source": "sources", "workgroup": "workgroups", "dest": "destinations"}
 _TITLE_FOR_KIND = {
-    "source": "📥 Source Channels",
-    "workgroup": "👥 Work Groups",
-    "dest": "📦 Result Destinations",
+    "source": t.SOURCES_TITLE,
+    "workgroup": t.WORKGROUPS_TITLE,
+    "dest": t.DESTINATIONS_TITLE,
 }
 
 
@@ -55,9 +56,9 @@ async def _list_entities(session, kind: str, arg: str):
 def _list_text(kind: str, arg: str, entities) -> str:
     header = _TITLE_FOR_KIND[kind]
     if kind == "dest":
-        header = f"📦 {OrderStatus(arg).value.title()} Destinations"
+        header = t.DESTINATIONS_FOR.format(status=t.status_name(OrderStatus(arg)))
     if not entities:
-        return f"{header}\n\nNothing configured yet. Use ➕ Add."
+        return f"{header}{t.CHAT_LIST_EMPTY}"
     lines = [header, ""]
     for entity in entities:
         title = entity.title or (
@@ -65,9 +66,9 @@ def _list_text(kind: str, arg: str, entities) -> str:
         )
         extra = ""
         if kind == "dest":
-            extra = f" · {'required' if entity.required else 'optional'}"
+            extra = f" · {t.LABEL_REQUIRED if entity.required else t.LABEL_OPTIONAL}"
             if entity.is_primary:
-                extra += " · ⭐ primary"
+                extra += f" · {t.LABEL_PRIMARY}"
         lines.append(
             f"{'🟢' if entity.enabled else '🔴'} <b>{title}</b>\n"
             f"    <code>{entity.chat_id}</code>{extra}"
@@ -95,9 +96,7 @@ async def open_destinations(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await render(
         callback,
-        "📦 <b>Result Destinations</b>\n\n"
-        "Where finalised orders are sent. Groups, supergroups and channels are "
-        "all supported, and each status can have several destinations.",
+        t.DESTINATIONS_INTRO,
         destinations_menu(),
     )
 
@@ -124,10 +123,7 @@ async def prompt_add(callback: CallbackQuery, callback_data: ChatCB, state: FSMC
     await state.update_data(kind=callback_data.kind, arg=callback_data.arg)
     await render(
         callback,
-        "Send the numeric <b>chat ID</b> to add.\n\n"
-        "Tip: add the bot to the chat, then run <code>/id</code> inside it, "
-        "or forward a message from it to @userinfobot.\n"
-        "Channel and supergroup IDs start with <code>-100</code>.",
+        t.ADD_CHAT_PROMPT,
         back_keyboard(_SECTION_FOR_KIND[callback_data.kind]),
     )
 
@@ -139,10 +135,7 @@ async def receive_chat_id(message: Message, state: FSMContext, services: Service
     arg = data.get("arg", "")
     chat_id = parse_chat_id(message.text or "")
     if chat_id is None:
-        await message.answer(
-            "❌ That is not a numeric chat ID. Usernames are not accepted here "
-            "because they can change; send the numeric ID."
-        )
+        await message.answer(t.ADD_CHAT_INVALID)
         return
 
     title: str | None = None
@@ -154,14 +147,11 @@ async def receive_chat_id(message: Message, state: FSMContext, services: Service
         username = info.get("username")
         available = info.get("available_reactions")
         if available is not None:
-            probe_note = (
-                f"\nAllowed reactions in this chat: {' '.join(available[:12]) or 'none'}"
+            probe_note = t.CHAT_ALLOWED_REACTIONS.format(
+                reactions=" ".join(available[:12]) or t.CHAT_NONE
             )
     except Exception as error:  # noqa: BLE001 - surfaced to the admin
-        probe_note = (
-            f"\n⚠️ Could not read the chat: {error}\n"
-            "It was saved anyway — add the bot to the chat and use 🧪 Test Access."
-        )
+        probe_note = t.CHAT_PROBE_FAILED.format(error=error)
 
     async with session_scope() as session:
         repo = _repo(session, kind)
@@ -180,7 +170,7 @@ async def receive_chat_id(message: Message, state: FSMContext, services: Service
     await state.clear()
     back = "main" if kind != "dest" else "destinations"
     await message.answer(
-        f"✅ Saved <b>{title or chat_id}</b>{probe_note}",
+        t.CHAT_SAVED.format(title=title or chat_id) + probe_note
     )
     await message.answer(
         _list_text(kind, arg, entities), reply_markup=chat_list(kind, entities, back, arg)
@@ -199,7 +189,7 @@ async def _render_detail(callback: CallbackQuery, callback_data: ChatCB, note: s
     async with session_scope() as session:
         entity = await _repo(session, callback_data.kind).get(callback_data.id)
     if entity is None:
-        await callback.answer("Not found", show_alert=True)
+        await callback.answer(t.NOT_FOUND, show_alert=True)
         return
     back = (
         f"{_SECTION_FOR_KIND[callback_data.kind]}"
@@ -207,17 +197,16 @@ async def _render_detail(callback: CallbackQuery, callback_data: ChatCB, note: s
         else "destinations"
     )
     title = entity.title or (f"@{entity.username}" if entity.username else str(entity.chat_id))
-    detail = (
-        f"<b>{title}</b>\n\n"
-        f"Chat ID: <code>{entity.chat_id}</code>\n"
-        f"Username: {('@' + entity.username) if entity.username else '—'}\n"
-        f"Status: {'🟢 Enabled' if entity.enabled else '🔴 Disabled'}\n"
-        f"Created: {entity.created_at:%Y-%m-%d %H:%M}\n"
+    detail = t.CHAT_DETAIL.format(
+        title=title,
+        chat_id=entity.chat_id,
+        username=("@" + entity.username) if entity.username else t.DASH,
+        status=t.toggle_text(entity.enabled),
+        created=t.fa_digits(f"{entity.created_at:%Y-%m-%d %H:%M}"),
     )
     if callback_data.kind == "dest":
-        detail += (
-            f"Required: {'YES' if entity.required else 'NO'}\n"
-            f"Primary: {'YES' if entity.is_primary else 'NO'}\n"
+        detail += t.CHAT_DETAIL_DESTINATION_EXTRA.format(
+            required=t.yes_no(entity.required), primary=t.yes_no(entity.is_primary)
         )
     if note:
         detail += f"\n{note}"
@@ -276,12 +265,16 @@ async def test_access(
         info = await services.gateway.get_chat_info(entity.chat_id)
         available = info.get("available_reactions")
         if available is None:
-            reactions_note = "\nReactions: all emoji allowed"
+            reactions_note = t.CHAT_REACTIONS_ALL
         else:
-            reactions_note = f"\nReactions allowed: {' '.join(available[:16]) or 'none'}"
+            reactions_note = t.CHAT_REACTIONS_LIST.format(
+                reactions=" ".join(available[:16]) or t.CHAT_NONE
+            )
     except Exception:  # noqa: BLE001
         pass
-    note = f"{'✅' if ok else '❌'} Access test: {detail}{reactions_note}"
+    note = t.ACCESS_TEST_RESULT.format(
+        icon="✅" if ok else "❌", detail=detail
+    ) + reactions_note
     await _render_detail(callback, callback_data, note)
 
 
@@ -293,7 +286,7 @@ async def prompt_edit(callback: CallbackQuery, callback_data: ChatCB, state: FSM
     )
     await render(
         callback,
-        "Send the new title for this chat.",
+        t.EDIT_TITLE_PROMPT,
         back_keyboard(_SECTION_FOR_KIND[callback_data.kind]),
     )
 
@@ -323,8 +316,7 @@ async def prompt_delete(callback: CallbackQuery, callback_data: ChatCB) -> None:
     )
     await render(
         callback,
-        "⚠️ Delete this entry?\n\nExisting orders keep their history; only the "
-        "configuration row is removed.",
+        t.CONFIRM_DELETE_CHAT,
         confirm_delete(callback_data.kind, callback_data.id, back, callback_data.arg),
     )
 

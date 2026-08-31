@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from aiogram.types import InlineKeyboardMarkup
 
+from app.admin import strings
 from app.bot.keyboards import admin as kb
 from app.bot.keyboards.callbacks import (
     AckCB,
@@ -140,27 +141,45 @@ def an_order() -> Order:
     return Order(id=8, status=OrderStatus.PENDING, display_number="order8")
 
 
+REQUIRED_SECTIONS = (
+    "dashboard",
+    "sources",
+    "workgroups",
+    "routing",
+    "operators",
+    "rules_success",
+    "rules_failed",
+    "reactions",
+    "destinations",
+    "reports",
+    "find_order",
+    "settings",
+    "system_status",
+    "audit",
+)
+
+
 async def test_main_menu_exposes_every_required_section():
+    """Every section the specification requires must be reachable."""
     markup = kb.main_menu()
     assert_keyboard_is_valid(markup)
-    labels = [b.text for row in markup.inline_keyboard for b in row]
-    for expected in (
-        "📊 Dashboard",
-        "📥 Source Channels",
-        "👥 Work Groups",
-        "🔀 Routing",
-        "👤 Operators",
-        "✅ Success Rules",
-        "❌ Failure Rules",
-        "👍 Result Reactions",
-        "📦 Result Destinations",
-        "📈 Reports",
-        "🔎 Find Order",
-        "⚙️ Settings",
-        "🩺 System Status",
-        "📝 Audit Logs",
-    ):
-        assert expected in labels
+
+    sections = {
+        Nav.unpack(button.callback_data).section
+        for row in markup.inline_keyboard
+        for button in row
+    }
+    assert sections == set(REQUIRED_SECTIONS)
+
+
+async def test_main_menu_is_labelled_in_persian():
+    labels = [b.text for row in kb.main_menu().inline_keyboard for b in row]
+    assert labels == [label for label, _section in strings.MENU_ITEMS]
+    # No Latin letters should survive in a button label (emoji are fine).
+    leftovers = [
+        label for label in labels if any(ch.isascii() and ch.isalpha() for ch in label)
+    ]
+    assert leftovers == []
 
 
 @pytest.mark.parametrize(
@@ -245,14 +264,14 @@ async def test_env_super_admin_detail_offers_no_destructive_action():
         Admin(id=1, telegram_user_id=1000, role=AdminRole.SUPER_ADMIN, enabled=True, from_env=True)
     )
     labels = [b.text for row in locked.inline_keyboard for b in row]
-    assert labels == ["⬅️ Back"]
+    assert labels == [strings.BTN_BACK]
 
     unlocked = kb.admin_detail(
         Admin(id=2, telegram_user_id=2000, role=AdminRole.ADMIN, enabled=True, from_env=False)
     )
     unlocked_labels = [b.text for row in unlocked.inline_keyboard for b in row]
-    assert "🗑 Remove" in unlocked_labels
-    assert "⬆️ Promote to Super Admin" in unlocked_labels
+    assert strings.BTN_REMOVE_ADMIN in unlocked_labels
+    assert strings.BTN_PROMOTE in unlocked_labels
 
 
 async def test_rules_menu_lists_every_signal():

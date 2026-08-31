@@ -14,6 +14,7 @@ from aiogram.types import (
     Message,
 )
 
+from app.admin import strings as t
 from app.admin import texts
 from app.audit.formatting import format_page, truncate
 from app.bot.filters import IsAdmin
@@ -41,11 +42,7 @@ async def open_find(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(FindOrder.waiting_for_query)
     await render(
         callback,
-        "🔎 <b>Find Order</b>\n\n"
-        "Send an order number (for example <code>153</code> or "
-        "<code>order153</code>) to search today's orders.\n\n"
-        "To search another day send <code>YYYY-MM-DD 153</code>.\n\n"
-        "You can also use <code>/order 153</code> anywhere.",
+        t.FIND_ORDER_PROMPT,
         back_keyboard("main"),
     )
 
@@ -86,7 +83,7 @@ def _parse_query(raw: str) -> tuple[date, int | None, str | None]:
 async def _search_and_reply(message: Message, raw: str) -> None:
     day, number, token = _parse_query(raw)
     if number is None:
-        await message.answer("❌ Could not read an order number from that.")
+        await message.answer(t.ORDER_QUERY_INVALID)
         return
     async with session_scope() as session:
         orders = await OrderRepository(session).search(
@@ -94,7 +91,9 @@ async def _search_and_reply(message: Message, raw: str) -> None:
         )
     if not orders:
         await message.answer(
-            f"No order found for <b>{number}</b> on <b>{day.isoformat()}</b>."
+            t.ORDER_NOT_FOUND.format(
+                number=t.fa_digits(number), day=t.fa_digits(day.isoformat())
+            )
         )
         return
     if len(orders) == 1:
@@ -102,12 +101,23 @@ async def _search_and_reply(message: Message, raw: str) -> None:
         await message.answer(text, reply_markup=markup)
         return
 
-    lines = [f"Found {len(orders)} orders for <b>{number}</b> on {day}:", ""]
+    lines = [
+        t.ORDER_MULTIPLE.format(
+            count=t.fa_digits(len(orders)),
+            number=t.fa_digits(number),
+            day=t.fa_digits(day),
+        ),
+        "",
+    ]
     for order in orders:
         lines.append(
-            f"• {order.display_number} — {order.status} "
-            f"(scope {order.counter_scope_key}, created {format_local(order.created_at)})\n"
-            f"  /orderid_{order.id}"
+            t.ORDER_MULTIPLE_ROW.format(
+                display=order.display_number,
+                status=t.status_name(order.status),
+                scope=order.counter_scope_key,
+                created=t.fa_digits(format_local(order.created_at)),
+                id=order.id,
+            )
         )
     await message.answer("\n".join(lines))
 
@@ -123,7 +133,7 @@ async def _order_screen(order_id: int) -> tuple[str, object]:
     async with session_scope() as session:
         order = await OrderRepository(session).get(order_id)
         if order is None:
-            return "Order not found.", back_keyboard("main")
+            return t.ORDER_MISSING, back_keyboard("main")
         source = None
         if order.source_channel_id:
             channel = await SourceChannelRepository(session).get(order.source_channel_id)
@@ -151,13 +161,7 @@ async def prompt_override(
         return
     await render(
         callback,
-        f"Set this order to <b>{status.value}</b>.\n\n"
-        "Choose what else should happen:\n\n"
-        "• <b>Dispatch + Acknowledge</b> — send to the result destination and, "
-        "once that succeeds, apply the acknowledgement reaction.\n"
-        "• <b>Dispatch only</b> — send the result but place no reaction.\n"
-        "• <b>Status only</b> — change the status and nothing else.\n\n"
-        "Already-sent destinations are never sent twice.",
+        t.OVERRIDE_PROMPT.format(status=t.status_name(status)),
         override_options(callback_data.id, status.value),
     )
 
@@ -209,14 +213,14 @@ async def order_audit(callback: CallbackQuery, callback_data: OrderCB) -> None:
         entries = await AuditRepository(session).for_order(callback_data.id)
     text = format_page(
         entries,
-        f"📝 <b>Audit trail — order #{callback_data.id}</b>",
+        t.AUDIT_ORDER_TITLE.format(order_id=t.fa_digits(callback_data.id)),
         include_order=False,
     )
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="⬅️ Back to order",
+                    text=t.BTN_BACK_TO_ORDER,
                     callback_data=OrderCB(action="view", id=callback_data.id).pack(),
                 )
             ]

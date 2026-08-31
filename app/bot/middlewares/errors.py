@@ -8,6 +8,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, TelegramObject
 
+from app.admin import strings as t
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +27,7 @@ class ErrorGuardMiddleware(BaseMiddleware):
             logger.exception("handler_failed", event_type=type(event).__name__)
             if isinstance(event, CallbackQuery):
                 try:
-                    await event.answer("Something went wrong. Check the logs.", show_alert=True)
+                    await event.answer(t.GENERIC_ERROR, show_alert=True)
                 except Exception:  # noqa: BLE001
                     pass
             return None

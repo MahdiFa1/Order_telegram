@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.admin import texts
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import (
@@ -41,10 +42,7 @@ async def open_reactions(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await render(
         callback,
-        "👍 <b>Result Reactions</b>\n\n"
-        "The acknowledgement reaction the bot places once an order has been "
-        "successfully sent to its result destination.\n\n"
-        "Success and failure are configured completely independently.",
+        t.REACTIONS_INTRO,
         reactions_menu(),
     )
 
@@ -53,16 +51,14 @@ async def _warnings(session, status: OrderStatus, config) -> list[str]:
     """Configuration validation surfaced directly on the screen."""
     warnings: list[str] = []
     if config.enabled and not config.reaction_value:
-        warnings.append("Enabled but no reaction is set — nothing will be applied.")
+        warnings.append(t.ACK_WARN_NO_REACTION)
 
     destinations = await ResultDestinationRepository(session).list_for_status(
         status, only_enabled=True
     )
     if config.enabled and not destinations:
         warnings.append(
-            f"No enabled {status.value} destination configured. The gate is "
-            "vacuously open, so the reaction will be applied even though "
-            "nothing was dispatched."
+            t.ACK_WARN_NO_DESTINATION.format(status=t.status_name(status))
         )
 
     acks = AcknowledgementRepository(session)
@@ -75,9 +71,7 @@ async def _warnings(session, status: OrderStatus, config) -> list[str]:
         and config.reaction_value == other.reaction_value
     ):
         warnings.append(
-            f"Success and failure acknowledgements both use "
-            f"{config.reaction_value} — operators will not be able to tell "
-            "the two outcomes apart."
+            t.ACK_WARN_SAME_EMOJI.format(emoji=config.reaction_value)
         )
     return warnings
 
@@ -106,11 +100,7 @@ async def toggle(callback: CallbackQuery, callback_data: AckCB) -> None:
         acks = AcknowledgementRepository(session)
         config = await acks.get_config(status)
         if not config.enabled and not config.reaction_value:
-            await callback.answer(
-                "Set a reaction first — an enabled acknowledgement with no "
-                "emoji would do nothing.",
-                show_alert=True,
-            )
+            await callback.answer(t.ACK_NEEDS_REACTION_FIRST, show_alert=True)
             return
         await acks.update_config(status, enabled=not config.enabled)
         await AuditRepository(session).log(
@@ -130,11 +120,7 @@ async def prompt_reaction(
     await state.update_data(status=callback_data.status)
     await render(
         callback,
-        "Send the emoji to use as the acknowledgement reaction.\n\n"
-        "Telegram allows a bot to set exactly <b>one</b> reaction per message, "
-        "so send a single emoji (for example ✅, 👍, ❌ or 👎).\n\n"
-        "It must be an emoji the target chat permits — use 🧪 Test Reaction "
-        "afterwards to confirm.",
+        t.SET_ACK_REACTION_PROMPT,
         back_keyboard("reactions"),
     )
 
@@ -143,7 +129,7 @@ async def prompt_reaction(
 async def receive_reaction(message: Message, state: FSMContext, services: Services) -> None:
     emoji = (message.text or "").strip()
     if not emoji or len(emoji) > 16:
-        await message.answer("❌ Send a single emoji.")
+        await message.answer(t.REACTION_INVALID)
         return
     data = await state.get_data()
     status = OrderStatus(data["status"])
@@ -168,14 +154,18 @@ async def receive_reaction(message: Message, state: FSMContext, services: Servic
             available = info.get("available_reactions")
             if available is not None and emoji not in available:
                 notes.append(
-                    f"⚠️ {destination.title or destination.chat_id} does not allow {emoji}. "
-                    f"Allowed: {' '.join(available[:12]) or 'none'}"
+                    "⚠️ "
+                    + t.ACK_REACTION_NOT_ALLOWED.format(
+                        chat=destination.title or destination.chat_id,
+                        emoji=emoji,
+                        allowed=" ".join(available[:12]) or t.CHAT_NONE,
+                    )
                 )
         except Exception:  # noqa: BLE001 - probing is optional
             continue
 
     await state.clear()
-    body = f"✅ Acknowledgement reaction for {status.value} set to {emoji}"
+    body = t.ACK_REACTION_SAVED.format(status=t.status_name(status), emoji=emoji)
     if notes:
         body += "\n\n" + "\n".join(notes)
     await message.answer(body, reply_markup=reactions_menu())
@@ -185,13 +175,7 @@ async def receive_reaction(message: Message, state: FSMContext, services: Servic
 async def prompt_target(callback: CallbackQuery, callback_data: AckCB) -> None:
     await render(
         callback,
-        "🎯 <b>Acknowledgement target</b>\n\n"
-        "<b>SMART</b> (default) — react on the operator's reply when the order "
-        "was finalised by a reply, and on the original order message when it "
-        "was finalised by a reaction (there is no operator message then).\n\n"
-        "<b>TRIGGER_MESSAGE</b> — always the message that triggered the "
-        "status, falling back to the order message.\n\n"
-        "<b>ORDER_MESSAGE</b> — always the original order message.",
+        t.TARGET_PROMPT,
         target_mode_picker(OrderStatus(callback_data.status)),
     )
 
@@ -214,13 +198,7 @@ async def set_target(callback: CallbackQuery, callback_data: AckCB) -> None:
 async def prompt_policy(callback: CallbackQuery, callback_data: AckCB) -> None:
     await render(
         callback,
-        "📦 <b>Dispatch policy</b>\n\n"
-        "When several destinations are configured, this decides when the "
-        "acknowledgement gate opens.\n\n"
-        "<b>All Required Destinations</b> (default) — every destination marked "
-        "required must have been sent.\n"
-        "<b>Any Destination</b> — one successful send is enough.\n"
-        "<b>Primary Destination</b> — only the ⭐ primary destination counts.",
+        t.POLICY_PROMPT,
         dispatch_policy_picker(OrderStatus(callback_data.status)),
     )
 
@@ -245,10 +223,7 @@ async def prompt_test(callback: CallbackQuery, callback_data: AckCB, state: FSMC
     await state.update_data(status=callback_data.status)
     await render(
         callback,
-        "🧪 <b>Test Reaction</b>\n\n"
-        "Send <code>&lt;chat_id&gt; &lt;message_id&gt;</code> of a real message "
-        "the bot can see, and the configured emoji will be applied to it.\n\n"
-        "Example: <code>-1001234567890 42</code>",
+        t.TEST_REACTION_PROMPT,
         back_keyboard("reactions"),
     )
 
@@ -257,12 +232,12 @@ async def prompt_test(callback: CallbackQuery, callback_data: AckCB, state: FSMC
 async def run_test(message: Message, state: FSMContext, services: Services) -> None:
     parts = (message.text or "").split()
     if len(parts) != 2:
-        await message.answer("❌ Send exactly: <code>chat_id message_id</code>")
+        await message.answer(t.TEST_REACTION_FORMAT)
         return
     try:
         chat_id, message_id = int(parts[0]), int(parts[1])
     except ValueError:
-        await message.answer("❌ Both values must be numeric.")
+        await message.answer(t.TEST_REACTION_NUMERIC)
         return
 
     data = await state.get_data()
@@ -271,11 +246,12 @@ async def run_test(message: Message, state: FSMContext, services: Services) -> N
         config = await AcknowledgementRepository(session).get_config(status)
         reaction = config.reaction_value
     if not reaction:
-        await message.answer("❌ No reaction configured yet.")
+        await message.answer(t.TEST_REACTION_NO_EMOJI)
         return
 
     ok, detail = await services.acknowledgements.test_reaction(chat_id, message_id, reaction)
     await state.clear()
     await message.answer(
-        f"{'✅' if ok else '❌'} Test result: {detail}", reply_markup=reactions_menu()
+        t.TEST_REACTION_RESULT.format(icon="✅" if ok else "❌", detail=detail),
+        reply_markup=reactions_menu(),
     )

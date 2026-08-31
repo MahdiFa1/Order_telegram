@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.admin import texts
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import report_result_keyboard, reports_menu
@@ -21,6 +22,18 @@ from app.reports.service import ReportPeriod
 from app.services.container import Services
 
 router = Router(name="admin_reports")
+
+def _group_row(name: object, report) -> str:
+    return t.BY_GROUP_ROW.format(
+        name=name,
+        total=t.fa_digits(report.total),
+        success=t.fa_digits(report.success),
+        failed=t.fa_digits(report.failed),
+        pending=t.fa_digits(report.pending),
+        conflict=t.fa_digits(report.conflict),
+        rate=t.fa_digits(f"{report.success_rate:.2f}"),
+    )
+
 
 _PERIODS = {
     "today": ReportPeriod.today,
@@ -35,11 +48,7 @@ async def open_reports(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await render(
         callback,
-        "📈 <b>Reports</b>\n\n"
-        "Rates are computed over finalised orders only:\n"
-        "<code>completed = success + failed</code>\n"
-        "<code>success_rate = success / completed × 100</code>\n\n"
-        "Pending and conflict orders are reported separately.",
+        t.REPORTS_INTRO,
         reports_menu(),
     )
 
@@ -67,17 +76,12 @@ async def show_sources(callback: CallbackQuery, services: Services) -> None:
     period = ReportPeriod.today()
     async with session_scope() as session:
         sources = await SourceChannelRepository(session).list_all()
-    lines = [f"📥 <b>By Source — {period.label}</b>", ""]
+    lines = [t.BY_SOURCE_TITLE.format(period=period.label), ""]
     if not sources:
-        lines.append("No source channel configured.")
+        lines.append(t.NO_SOURCE_CONFIGURED)
     for source in sources:
         report = await services.reports.order_report(period, source_channel_id=source.id)
-        lines.append(
-            f"<b>{source.title or source.chat_id}</b>\n"
-            f"  Total {report.total} · ✅ {report.success} · ❌ {report.failed} · "
-            f"⏳ {report.pending} · ⚠️ {report.conflict}\n"
-            f"  Success rate {report.success_rate:.2f}%"
-        )
+        lines.append(_group_row(source.title or source.chat_id, report))
     await render(callback, "\n".join(lines), report_result_keyboard())
 
 
@@ -86,17 +90,12 @@ async def show_work_groups(callback: CallbackQuery, services: Services) -> None:
     period = ReportPeriod.today()
     async with session_scope() as session:
         groups = await WorkGroupRepository(session).list_all()
-    lines = [f"👥 <b>By Work Group — {period.label}</b>", ""]
+    lines = [t.BY_WORK_GROUP_TITLE.format(period=period.label), ""]
     if not groups:
-        lines.append("No work group configured.")
+        lines.append(t.NO_WORK_GROUP_CONFIGURED)
     for group in groups:
         report = await services.reports.order_report(period, work_group_id=group.id)
-        lines.append(
-            f"<b>{group.title or group.chat_id}</b>\n"
-            f"  Total {report.total} · ✅ {report.success} · ❌ {report.failed} · "
-            f"⏳ {report.pending} · ⚠️ {report.conflict}\n"
-            f"  Success rate {report.success_rate:.2f}%"
-        )
+        lines.append(_group_row(group.title or group.chat_id, report))
     await render(callback, "\n".join(lines), report_result_keyboard())
 
 
@@ -105,9 +104,7 @@ async def prompt_custom(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(CustomRange.waiting_for_range)
     await render(
         callback,
-        "📅 Send a date range as <code>YYYY-MM-DD YYYY-MM-DD</code>\n"
-        "or a single date as <code>YYYY-MM-DD</code>.\n\n"
-        "Dates are interpreted in the business timezone.",
+        t.CUSTOM_RANGE_PROMPT,
         back_keyboard("reports"),
     )
 
@@ -123,7 +120,7 @@ async def receive_custom(message: Message, state: FSMContext, services: Services
         else:
             raise ValueError
     except ValueError:
-        await message.answer("❌ Use <code>YYYY-MM-DD</code> or two such dates.")
+        await message.answer(t.CUSTOM_RANGE_INVALID)
         return
     if first > last:
         first, last = last, first

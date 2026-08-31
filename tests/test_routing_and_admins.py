@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.admin import strings
 from app.audit.formatting import format_page, truncate
 from app.database.engine import session_scope
 from app.database.models import AuditLog
@@ -15,7 +16,7 @@ from app.database.repositories import (
     WorkGroupRepository,
 )
 from app.routing.resolver import describe_routing, resolve
-from app.utils.enums import AdminRole, OrderStatus
+from app.utils.enums import AdminRole, AuditEvent, OrderStatus
 from app.utils.time import utcnow
 from tests.conftest import SOURCE_CHAT_ID, WORK_GROUP_CHAT_ID
 
@@ -176,13 +177,15 @@ async def test_audit_page_renders_entries_and_empty_state():
     )
     rendered = format_page([entry], "HEADER")
     assert "HEADER" in rendered
-    assert "ORDER_CREATED" in rendered
-    assert "order #7" in rendered
+    # The stored event code is rendered with its Persian label.
+    assert strings.AUDIT_EVENT_LABELS[AuditEvent.ORDER_CREATED] in rendered
+    assert "ORDER_CREATED" not in rendered
+    assert strings.fa_digits(7) in rendered
 
     without_order = format_page([entry], "HEADER", include_order=False)
-    assert "order #7" not in without_order
+    assert strings.AUDIT_ORDER_REF.format(order_id=strings.fa_digits(7)) not in without_order
 
-    assert "No entries." in format_page([], "HEADER")
+    assert strings.AUDIT_EMPTY in format_page([], "HEADER")
 
 
 async def test_audit_page_stays_within_the_telegram_limit():

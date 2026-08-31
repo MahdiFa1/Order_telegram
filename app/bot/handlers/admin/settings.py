@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import audit_keyboard, counter_scope_picker, settings_menu
@@ -36,17 +37,11 @@ async def _show(callback: CallbackQuery, note: str = "") -> None:
         values.get(SettingKey.ORDER_PREFIX) or "order",
         values.get(SettingKey.ORDER_NUMBER_FORMAT) or "{prefix}{number}",
     )
-    text = (
-        "⚙️ <b>Settings</b>\n\n"
-        f"<b>Counter Scope:</b> {scope}\n"
-        "<i>GLOBAL — one shared daily sequence across all sources.\n"
-        "PER_SOURCE — each source channel numbers its own orders.</i>\n\n"
-        f"<b>Order Prefix:</b> {values.get(SettingKey.ORDER_PREFIX)}\n"
-        f"<b>Number Format:</b> <code>{values.get(SettingKey.ORDER_NUMBER_FORMAT)}</code>\n"
-        f"Preview: <b>{preview}</b>\n\n"
-        "<i>The counter resets to 1 on the first order of each new business "
-        "day in the configured timezone — no cron job is involved, so it is "
-        "correct even if the bot was offline at midnight.</i>"
+    text = t.SETTINGS_SCREEN.format(
+        scope=t.COUNTER_SCOPE_NAMES.get(scope or "", scope),
+        prefix=values.get(SettingKey.ORDER_PREFIX),
+        format=values.get(SettingKey.ORDER_NUMBER_FORMAT),
+        preview=preview,
     )
     if note:
         text += f"\n\n{note}"
@@ -57,9 +52,7 @@ async def _show(callback: CallbackQuery, note: str = "") -> None:
 async def prompt_scope(callback: CallbackQuery) -> None:
     await render(
         callback,
-        "Choose the counter scope.\n\n"
-        "Changing it does not renumber existing orders; the new scope applies "
-        "from the next order onwards.",
+        t.COUNTER_SCOPE_PROMPT,
         counter_scope_picker(),
     )
 
@@ -95,19 +88,9 @@ async def prompt_value(
     await state.set_state(EditSetting.waiting_for_value)
     await state.update_data(field=callback_data.action)
     if callback_data.action == "prefix":
-        prompt = (
-            "Send the new order prefix.\n\n"
-            "Default is <code>order</code>, producing <code>order125</code>."
-        )
+        prompt = t.PREFIX_PROMPT
     else:
-        prompt = (
-            "Send the number format template.\n\n"
-            "Available placeholders: <code>{prefix}</code> and <code>{number}</code>.\n\n"
-            "Examples:\n"
-            "<code>{prefix}{number}</code> → order125\n"
-            "<code>ORD-{number}</code> → ORD-125\n"
-            "<code>{prefix}-{number}</code> → order-125"
-        )
+        prompt = t.FORMAT_PROMPT
     await render(callback, prompt, back_keyboard("settings"))
 
 
@@ -117,20 +100,17 @@ async def receive_value(message: Message, state: FSMContext) -> None:
     field = data.get("field")
     value = (message.text or "").strip()
     if not value:
-        await message.answer("❌ Empty value.")
+        await message.answer(t.SETTING_EMPTY)
         return
 
     if field == "format":
         try:
             probe = value.format(prefix="order", number=1)
         except (KeyError, IndexError, ValueError):
-            await message.answer(
-                "❌ Invalid template. Use only <code>{prefix}</code> and "
-                "<code>{number}</code>."
-            )
+            await message.answer(t.FORMAT_INVALID)
             return
         if "1" not in probe:
-            await message.answer("❌ The template must include <code>{number}</code>.")
+            await message.answer(t.FORMAT_NEEDS_NUMBER)
             return
         key = SettingKey.ORDER_NUMBER_FORMAT
     else:
@@ -151,7 +131,7 @@ async def receive_value(message: Message, state: FSMContext) -> None:
         values.get(SettingKey.ORDER_NUMBER_FORMAT) or "{prefix}{number}",
     )
     await message.answer(
-        f"✅ Saved. New orders will look like <b>{preview}</b>",
+        t.SETTING_SAVED.format(preview=preview),
         reply_markup=settings_menu(values),
     )
 
@@ -175,5 +155,5 @@ async def _show_audit(callback: CallbackQuery, offset: int) -> None:
         entries = await AuditRepository(session).recent(limit=11, offset=offset)
     has_more = len(entries) > 10
     entries = entries[:10]
-    text = format_page(entries, f"📝 <b>Audit Logs</b> (from #{offset + 1})")
+    text = format_page(entries, t.AUDIT_TITLE.format(start=t.fa_digits(offset + 1)))
     await render(callback, text, audit_keyboard(offset, has_more))

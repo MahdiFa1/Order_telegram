@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import aiohttp
 import pytest
 
+from app.admin import strings
 from app.config import get_settings
 from app.database.engine import session_scope
 from app.database.repositories import (
@@ -426,12 +427,17 @@ async def test_startup_notification_lists_what_is_missing(services):
     assert len(gateway.texts) == 1, "the one seeded super admin should be messaged"
     user_id, text = gateway.texts[0]
     assert user_id == 1000
-    assert "Bot started successfully" in text
+    assert strings.STARTUP_TITLE in text
     assert "@order_bot" in text
-    assert "Not ready yet" in text
-    for missing in ("a source channel", "a work group", "a route", "an operator"):
+    assert strings.STARTUP_NOT_READY.split("{")[0] in text
+    for missing in (
+        strings.STARTUP_MISSING_SOURCE,
+        strings.STARTUP_MISSING_WORK_GROUP,
+        strings.STARTUP_MISSING_ROUTE,
+        strings.STARTUP_MISSING_OPERATOR,
+    ):
         assert missing in text
-    assert "Source channels: 0" in text
+    assert strings.STARTUP_SOURCES.format(mark="⚠️", count=strings.fa_digits(0)) in text
 
 
 async def test_startup_notification_confirms_a_configured_deployment(destinations):
@@ -442,14 +448,18 @@ async def test_startup_notification_confirms_a_configured_deployment(destination
     await real_notifier(services).startup_completed("order_bot", 999)
 
     _user_id, text = gateway.texts[0]
-    assert "Not ready yet" not in text
-    assert "Everything required is configured" in text
-    assert "Source channels: 1" in text
-    assert "Work groups: 1" in text
-    assert "Routes: 1" in text
-    assert "Operators: 1" in text
-    assert "Success destinations: 1" in text
-    assert "Failure destinations: 1" in text
+    assert strings.STARTUP_NOT_READY.split("{")[0] not in text
+    assert strings.STARTUP_READY in text
+    one = strings.fa_digits(1)
+    for template in (
+        strings.STARTUP_SOURCES,
+        strings.STARTUP_WORK_GROUPS,
+        strings.STARTUP_ROUTES,
+        strings.STARTUP_OPERATORS,
+        strings.STARTUP_SUCCESS_TARGETS,
+        strings.STARTUP_FAILURE_TARGETS,
+    ):
+        assert template.format(mark="✅", count=one) in text
 
 
 async def test_startup_notification_reaches_every_enabled_admin(services):
@@ -525,3 +535,53 @@ async def test_compose_pins_the_database_hostname_with_an_alias():
     # Both services must sit on the network that alias belongs to.
     assert "default" in parsed["services"]["bot"]["networks"]
     assert "default" in parsed["networks"]
+
+
+async def test_bot_command_menu_is_persian():
+    """The command list Telegram shows must match the panel's language."""
+    from app.admin import strings
+
+    names = [name for name, _description in strings.BOT_COMMANDS]
+    assert names == ["start", "order", "id"]
+    for _name, description in strings.BOT_COMMANDS:
+        assert description, "every command needs a description"
+        assert not any(ch.isascii() and ch.isalpha() for ch in description)
+        # Telegram rejects command descriptions longer than 256 characters.
+        assert len(description) <= 256
+
+
+async def test_every_user_facing_string_is_persian():
+    """Guards against an English sentence creeping back into the panel."""
+    import re
+
+    from app.admin import strings
+
+    # Placeholders, HTML tags and slash-commands are structural, not prose.
+    structural = re.compile(r"\{[^}]*\}|<[^>]*>|/[a-z_]+")
+    words = re.compile(r"[A-Za-z]{2,}")
+    #: Literal identifiers an admin must see verbatim to act on them:
+    #: environment variables, order-number examples, date format, the
+    #: chat_id/message_id argument names, HTML entities, and "done" as a
+    #: sample text pattern operators commonly configure.
+    allowed = {
+        "SUPERADMIN", "IDS", "ORD", "order", "YYYY", "MM", "DD",
+        "start", "id", "chat", "message", "done", "lt", "gt",
+    }
+
+    offenders: list[tuple[str, str]] = []
+    for name, value in vars(strings).items():
+        if name.startswith("_") or name == "BOT_COMMANDS":
+            continue
+        candidates = [value] if isinstance(value, str) else []
+        if isinstance(value, dict):
+            candidates = [v for v in value.values() if isinstance(v, str)]
+        if isinstance(value, list):
+            candidates = [
+                item[0] for item in value if isinstance(item, tuple) and item
+            ]
+        for text in candidates:
+            for word in words.findall(structural.sub(" ", text)):
+                if word not in allowed:
+                    offenders.append((name, word))
+
+    assert offenders == [], f"untranslated text: {offenders[:10]}"

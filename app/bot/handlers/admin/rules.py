@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.admin import texts
+from app.admin import strings as t
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import (
@@ -79,11 +80,7 @@ async def toggle_mode(callback: CallbackQuery, callback_data: RuleCB) -> None:
         new_mode = RuleMode.ALL if RuleMode(rule.mode) is RuleMode.ANY else RuleMode.ANY
         if new_mode is RuleMode.ALL and not enabled:
             # Configuration validation: ALL with zero signals can never match.
-            await callback.answer(
-                "Cannot switch to ALL while no signal is enabled — the rule "
-                "could never match. Enable at least one signal first.",
-                show_alert=True,
-            )
+            await callback.answer(t.CANNOT_SET_ALL_WITHOUT_SIGNAL, show_alert=True)
             return
         await repo.set_mode(status, new_mode)
         await AuditRepository(session).log(
@@ -100,7 +97,7 @@ async def toggle_signal(callback: CallbackQuery, callback_data: RuleCB) -> None:
     try:
         key = SignalKey(callback_data.arg)
     except ValueError:
-        await callback.answer("Unknown signal", show_alert=True)
+        await callback.answer(t.UNKNOWN_SIGNAL, show_alert=True)
         return
     async with session_scope() as session:
         repo = RuleRepository(session)
@@ -108,9 +105,7 @@ async def toggle_signal(callback: CallbackQuery, callback_data: RuleCB) -> None:
         enabled = {s.signal_key for s in rule.signals if s.enabled}
         turning_off = key.value in enabled
         if turning_off and RuleMode(rule.mode) is RuleMode.ALL and len(enabled) == 1:
-            await callback.answer(
-                "Mode is ALL: at least one signal must stay enabled.", show_alert=True
-            )
+            await callback.answer(t.CANNOT_DISABLE_LAST_SIGNAL, show_alert=True)
             return
         await repo.toggle_signal(status, key)
         await AuditRepository(session).log(
@@ -134,16 +129,16 @@ async def list_texts(callback: CallbackQuery, callback_data: RuleCB, state: FSMC
 async def _show_texts(callback: CallbackQuery, status: OrderStatus) -> None:
     async with session_scope() as session:
         patterns = await RuleRepository(session).list_text_patterns(status)
-    lines = [f"📝 <b>{status.value.title()} Text Patterns</b>", ""]
+    lines = [t.TEXT_PATTERNS_TITLE.format(status=t.status_name(status)), ""]
     if patterns:
         for pattern in patterns:
             lines.append(
                 f"{'🟢' if pattern.enabled else '🔴'} <code>{pattern.pattern}</code>\n"
-                f"    {pattern.match_mode} · "
-                f"{'case sensitive' if pattern.case_sensitive else 'case insensitive'}"
+                f"    {t.MATCH_MODE_NAMES.get(pattern.match_mode, pattern.match_mode)} · "
+                f"{t.CASE_SENSITIVE if pattern.case_sensitive else t.CASE_INSENSITIVE}"
             )
     else:
-        lines.append("No pattern yet. A reply-text rule needs at least one.")
+        lines.append(t.TEXT_PATTERNS_EMPTY)
     await render(callback, "\n".join(lines), text_pattern_list(status, patterns))
 
 
@@ -153,9 +148,7 @@ async def prompt_text(callback: CallbackQuery, callback_data: RuleCB, state: FSM
     await state.update_data(status=callback_data.status)
     await render(
         callback,
-        "Send the text to match.\n\n"
-        "Examples: <code>done</code>, <code>انجام شد</code>, <code>ناموفق</code>\n"
-        "You will pick the match mode next.",
+        t.ADD_PATTERN_PROMPT,
         back_keyboard(_section(OrderStatus(callback_data.status))),
     )
 
@@ -164,13 +157,13 @@ async def prompt_text(callback: CallbackQuery, callback_data: RuleCB, state: FSM
 async def receive_pattern(message: Message, state: FSMContext) -> None:
     pattern = (message.text or "").strip()
     if not pattern:
-        await message.answer("❌ Empty pattern.")
+        await message.answer(t.PATTERN_EMPTY)
         return
     data = await state.get_data()
     await state.update_data(pattern=pattern)
     await state.set_state(AddTextPattern.waiting_for_mode)
     await message.answer(
-        f"Pattern: <code>{pattern}</code>\n\nChoose the match mode:",
+        t.PATTERN_CHOSEN.format(pattern=pattern),
         reply_markup=match_mode_picker(OrderStatus(data["status"])),
     )
 
@@ -183,7 +176,7 @@ async def save_pattern(
     pattern = data.get("pattern")
     status = OrderStatus(callback_data.status)
     if not pattern:
-        await callback.answer("Start again from ➕ Add Pattern.", show_alert=True)
+        await callback.answer(t.PATTERN_RESTART, show_alert=True)
         await _show_texts(callback, status)
         return
     mode = MatchMode(callback_data.arg)
@@ -236,10 +229,9 @@ async def _show_reactions(callback: CallbackQuery, status: OrderStatus) -> None:
     async with session_scope() as session:
         reactions = await RuleRepository(session).list_reactions(status)
     lines = [
-        f"😀 <b>{status.value.title()} Detection Reactions</b>",
+        t.RULE_REACTIONS_TITLE.format(status=t.status_name(status)),
         "",
-        "An <b>authorized operator</b> reacting with one of these emoji on an "
-        "order message produces a signal. Reactions from anyone else are ignored.",
+        t.RULE_REACTIONS_INTRO,
         "",
     ]
     if reactions:
@@ -247,7 +239,7 @@ async def _show_reactions(callback: CallbackQuery, status: OrderStatus) -> None:
             f"{'🟢' if r.enabled else '🔴'} {r.emoji}" for r in reactions
         )
     else:
-        lines.append("None configured yet.")
+        lines.append(t.RULE_REACTIONS_EMPTY)
     await render(callback, "\n".join(lines), rule_reaction_list(status, reactions))
 
 
@@ -259,7 +251,7 @@ async def prompt_reaction(
     await state.update_data(status=callback_data.status)
     await render(
         callback,
-        "Send a single emoji to accept as a detection reaction (for example ✅ or 👍).",
+        t.ADD_REACTION_PROMPT,
         back_keyboard(_section(OrderStatus(callback_data.status))),
     )
 
@@ -268,7 +260,7 @@ async def prompt_reaction(
 async def receive_reaction(message: Message, state: FSMContext) -> None:
     emoji = (message.text or "").strip()
     if not emoji or len(emoji) > 16:
-        await message.answer("❌ Send one emoji.")
+        await message.answer(t.REACTION_INVALID)
         return
     data = await state.get_data()
     status = OrderStatus(data["status"])
@@ -282,7 +274,8 @@ async def receive_reaction(message: Message, state: FSMContext) -> None:
         reactions = await RuleRepository(session).list_reactions(status)
     await state.clear()
     await message.answer(
-        f"✅ Added {emoji}", reply_markup=rule_reaction_list(status, reactions)
+        t.REACTION_ADDED.format(emoji=emoji),
+        reply_markup=rule_reaction_list(status, reactions),
     )
 
 
