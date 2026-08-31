@@ -57,3 +57,6 @@ logs/
 
 # Docker local state
 postgres_data/
+
+# Alembic bytecode
+alembic/versions/__pycache__/
