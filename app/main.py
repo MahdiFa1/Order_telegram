@@ -43,6 +43,26 @@ ALLOWED_UPDATES = [
 ]
 
 
+#: The update-idempotency ledger only needs to cover Telegram's own redelivery
+#: window; without pruning it would grow for the life of the deployment.
+UPDATE_LEDGER_RETENTION_DAYS = 7
+
+
+async def _purge_old_update_ledger() -> int:
+    from datetime import timedelta
+
+    from app.database.engine import session_scope
+    from app.database.repositories import OrderRepository
+    from app.utils.time import utcnow
+
+    cutoff = utcnow() - timedelta(days=UPDATE_LEDGER_RETENTION_DAYS)
+    async with session_scope() as session:
+        removed = await OrderRepository(session).purge_processed_updates(cutoff)
+    if removed:
+        logger.info("update_ledger_pruned", removed=removed)
+    return removed
+
+
 def build_dispatcher(services) -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.update.outer_middleware(IdempotencyMiddleware())
@@ -124,6 +144,14 @@ async def run(settings: Settings) -> None:
         # new updates.
         await services.finalizer.recover()
         await services.orders.process_pending_deliveries()
+        await _purge_old_update_ledger()
+
+        # Proof of life in Telegram itself: a message that arrives confirms the
+        # token, the network, the database and the admin list all at once.
+        try:
+            await services.notifier.startup_completed(me.username, me.id)
+        except Exception:  # noqa: BLE001 - a failed notice must not stop the bot
+            logger.exception("startup_notification_failed")
 
         polling_task = asyncio.create_task(
             dispatcher.start_polling(

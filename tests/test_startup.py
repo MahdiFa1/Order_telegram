@@ -409,3 +409,98 @@ async def test_rejected_bot_token_exits_with_guidance(session_factory, monkeypat
     message = str(excinfo.value)
     assert "rejected by Telegram" in message
     assert "revoked" in message
+
+
+def real_notifier(services):
+    """The production AdminNotifier, wired to the fake gateway."""
+    from app.services.notifications import AdminNotifier
+
+    return AdminNotifier(services.session_factory, services.gateway, services.settings)
+
+
+async def test_startup_notification_lists_what_is_missing(services):
+    """A fresh deployment must say plainly that it is not ready yet."""
+    gateway = services.gateway
+    await real_notifier(services).startup_completed("order_bot", 999)
+
+    assert len(gateway.texts) == 1, "the one seeded super admin should be messaged"
+    user_id, text = gateway.texts[0]
+    assert user_id == 1000
+    assert "Bot started successfully" in text
+    assert "@order_bot" in text
+    assert "Not ready yet" in text
+    for missing in ("a source channel", "a work group", "a route", "an operator"):
+        assert missing in text
+    assert "Source channels: 0" in text
+
+
+async def test_startup_notification_confirms_a_configured_deployment(destinations):
+    services = destinations
+    gateway = services.gateway
+    gateway.reset()
+
+    await real_notifier(services).startup_completed("order_bot", 999)
+
+    _user_id, text = gateway.texts[0]
+    assert "Not ready yet" not in text
+    assert "Everything required is configured" in text
+    assert "Source channels: 1" in text
+    assert "Work groups: 1" in text
+    assert "Routes: 1" in text
+    assert "Operators: 1" in text
+    assert "Success destinations: 1" in text
+    assert "Failure destinations: 1" in text
+
+
+async def test_startup_notification_reaches_every_enabled_admin(services):
+    from app.database.repositories import AdminRepository
+    from app.utils.enums import AdminRole
+
+    async with session_scope() as session:
+        repo = AdminRepository(session)
+        await repo.add(2001, AdminRole.ADMIN)
+        disabled = await repo.add(2002, AdminRole.ADMIN)
+        disabled.enabled = False
+
+    services.gateway.reset()
+    await real_notifier(services).startup_completed("order_bot", 999)
+
+    messaged = {user_id for user_id, _text in services.gateway.texts}
+    assert messaged == {1000, 2001}, "disabled admins must not be messaged"
+
+
+async def test_startup_notification_survives_an_unreachable_admin(services):
+    """An admin who never opened a chat with the bot must not break startup."""
+    services.gateway.failing_chats.add(1000)
+
+    await real_notifier(services).startup_completed("order_bot", 999)  # must not raise
+
+    assert services.gateway.texts == []
+
+
+async def test_update_ledger_is_pruned_at_startup(session_factory):
+    from datetime import timedelta
+
+    import app.main as main_module
+    from app.database.models import ProcessedUpdate
+    from app.database.repositories import OrderRepository
+    from app.utils.time import utcnow
+    from sqlalchemy import func, select
+
+    async with session_scope() as session:
+        repo = OrderRepository(session)
+        await repo.mark_update_processed("update:recent")
+        await repo.mark_update_processed("update:stale")
+
+    async with session_scope() as session:
+        stale = await session.execute(
+            select(ProcessedUpdate).where(ProcessedUpdate.update_key == "update:stale")
+        )
+        stale.scalar_one().created_at = utcnow() - timedelta(days=30)
+
+    removed = await main_module._purge_old_update_ledger()
+    assert removed == 1
+
+    async with session_scope() as session:
+        remaining = await session.execute(select(func.count()).select_from(ProcessedUpdate))
+        assert remaining.scalar_one() == 1

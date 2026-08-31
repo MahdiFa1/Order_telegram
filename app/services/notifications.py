@@ -6,9 +6,19 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import Settings
 from app.database.engine import session_scope
-from app.database.repositories import AdminRepository, AuditRepository, OrderRepository
+from app.database.repositories import (
+    AdminRepository,
+    AuditRepository,
+    OperatorRepository,
+    OrderRepository,
+    ResultDestinationRepository,
+    RouteRepository,
+    SourceChannelRepository,
+    WorkGroupRepository,
+)
 from app.telegram.gateway import TelegramGateway
-from app.utils.enums import SettingKey
+from app.utils.enums import OrderStatus, SettingKey
+from app.utils.time import local_now
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -79,6 +89,83 @@ class AdminNotifier:
             f"acknowledgement was applied.\n\nResolve it from "
             f"⚙️ Admin Panel → 🔎 Find Order.",
         )
+
+    async def startup_completed(self, username: str | None, bot_id: int) -> None:
+        """Tell the admins the bot is live, and what is still unconfigured.
+
+        This is the answer to "I deployed it, is it actually running?" -- a
+        message arriving in Telegram proves the token, the network, the
+        database and the admin list are all correct at once.
+        """
+        async with session_scope() as session:
+            sources = await SourceChannelRepository(session).count_enabled()
+            work_groups = await WorkGroupRepository(session).count_enabled()
+            operators = await OperatorRepository(session).count_enabled()
+            routes = len(
+                [r for r in await RouteRepository(session).list_all() if r.enabled]
+            )
+            destinations = ResultDestinationRepository(session)
+            success_targets = len(
+                await destinations.list_for_status(OrderStatus.SUCCESS, only_enabled=True)
+            )
+            failure_targets = len(
+                await destinations.list_for_status(OrderStatus.FAILED, only_enabled=True)
+            )
+            pending = await OrderRepository(session).count_pending()
+            recipients = [a.telegram_user_id for a in await AdminRepository(session).list_enabled()]
+
+        def mark(value: int) -> str:
+            return "✅" if value else "⚠️"
+
+        # Orders cannot flow at all until these four exist.
+        blocking = [
+            name
+            for name, value in (
+                ("a source channel", sources),
+                ("a work group", work_groups),
+                ("a route between them", routes),
+                ("an operator", operators),
+            )
+            if not value
+        ]
+
+        lines = [
+            "✅ <b>Bot started successfully</b>",
+            "",
+            f"Bot: @{username} (<code>{bot_id}</code>)" if username else f"Bot id: {bot_id}",
+            "Database: connected",
+            f"Local time: {local_now():%Y-%m-%d %H:%M} ({self.settings.timezone})",
+            "",
+            "<b>Configuration</b>",
+            f"{mark(sources)} Source channels: {sources}",
+            f"{mark(work_groups)} Work groups: {work_groups}",
+            f"{mark(routes)} Routes: {routes}",
+            f"{mark(operators)} Operators: {operators}",
+            f"{mark(success_targets)} Success destinations: {success_targets}",
+            f"{mark(failure_targets)} Failure destinations: {failure_targets}",
+        ]
+        if pending:
+            lines.append(f"⏳ Pending orders carried over: {pending}")
+
+        lines.append("")
+        if blocking:
+            lines.append(
+                "⚠️ <b>Not ready yet.</b> Orders cannot flow until you add "
+                + ", ".join(blocking)
+                + "."
+            )
+            lines.append("Send /start to open the admin panel and set them up.")
+        else:
+            lines.append("Everything required is configured. Send /start to manage it.")
+
+        text = "\n".join(lines)
+        for user_id in recipients:
+            try:
+                await self.gateway.send_text(user_id, text)
+            except Exception as error:  # noqa: BLE001 - never block startup
+                logger.warning(
+                    "startup_notify_failed", admin=user_id, error=str(error)
+                )
 
     async def route_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
