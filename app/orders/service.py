@@ -15,10 +15,10 @@ from app.database.repositories import (
     AuditRepository,
     CounterRepository,
     OrderRepository,
-    RouteRepository,
     SettingRepository,
     SourceChannelRepository,
 )
+from app.routing.resolver import resolve as resolve_routing
 from app.database.repositories.orders import scope_key_for
 from app.orders.numbering import render_display_number
 from app.telegram.composer import compose
@@ -223,21 +223,19 @@ class OrderService:
         async with session_scope() as session:
             orders = OrderRepository(session)
             order = await orders.get(order_id)
-            if order is None or order.source_channel_id is None:
+            if order is None:
                 return
-            work_groups = await RouteRepository(session).target_work_groups(
-                order.source_channel_id
-            )
-            if not work_groups:
+            plan = await resolve_routing(session, order.source_channel_id)
+            if plan.is_empty:
                 await AuditRepository(session).log(
                     AuditEvent.ORDER_ROUTE_FAILED,
                     order_id=order.id,
                     level="WARNING",
-                    message="No enabled route configured for this source channel",
+                    message=f"Order not routed: {plan.reason}",
                 )
-                logger.warning("order_no_route", order_id=order.id)
+                logger.warning("order_no_route", order_id=order.id, reason=plan.reason)
                 return
-            for group in work_groups:
+            for group in plan.work_groups:
                 await orders.ensure_delivery(order.id, group.id, group.chat_id)
 
         await self.process_pending_deliveries(order_id=order_id)

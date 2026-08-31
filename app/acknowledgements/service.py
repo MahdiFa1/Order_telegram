@@ -160,7 +160,6 @@ class AcknowledgementService:
             reaction_value = config.reaction_value
             reaction_type = ReactionType(config.reaction_type)
             target_mode = config.target_mode
-            max_retry = config.max_retry_count
 
         # Claim in its own transaction: only the claimer performs the API call.
         async with session_scope() as session:

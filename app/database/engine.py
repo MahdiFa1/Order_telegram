@@ -30,9 +30,10 @@ def init_engine(settings: Settings) -> AsyncEngine:
             pool_pre_ping=True,
             pool_recycle=1800,
         )
-        _session_factory = async_sessionmaker(
-            bind=_engine, expire_on_commit=False, autoflush=False
-        )
+        # autoflush stays ON (SQLAlchemy's default): a repository that mutates
+        # an ORM object must be visible to the very next query in the same
+        # session, otherwise callers silently read stale rows.
+        _session_factory = async_sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 
 

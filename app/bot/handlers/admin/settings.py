@@ -13,10 +13,10 @@ from app.bot.keyboards.callbacks import AuditCB, Nav, SettingCB
 from app.bot.keyboards.common import back_keyboard
 from app.bot.states.admin import EditSetting
 from app.database.engine import session_scope
+from app.audit.formatting import format_page
 from app.database.repositories import AuditRepository, SettingRepository
 from app.orders.numbering import render_display_number
 from app.utils.enums import AuditEvent, CounterScope, SettingKey
-from app.utils.time import format_local
 
 router = Router(name="admin_settings")
 
@@ -175,13 +175,5 @@ async def _show_audit(callback: CallbackQuery, offset: int) -> None:
         entries = await AuditRepository(session).recent(limit=11, offset=offset)
     has_more = len(entries) > 10
     entries = entries[:10]
-    lines = [f"📝 <b>Audit Logs</b> (from #{offset + 1})", ""]
-    if not entries:
-        lines.append("No entries.")
-    for entry in entries:
-        order_ref = f" · order #{entry.order_id}" if entry.order_id else ""
-        lines.append(
-            f"<code>{format_local(entry.created_at, '%m-%d %H:%M:%S')}</code> "
-            f"<b>{entry.event}</b>{order_ref}\n  {entry.message or ''}"
-        )
-    await render(callback, "\n".join(lines)[:4000], audit_keyboard(offset, has_more))
+    text = format_page(entries, f"📝 <b>Audit Logs</b> (from #{offset + 1})")
+    await render(callback, text, audit_keyboard(offset, has_more))

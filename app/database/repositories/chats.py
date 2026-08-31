@@ -75,6 +75,7 @@ class _ChatRepository(BaseRepository):
         if entity is None:
             return False
         await self.session.delete(entity)
+        await self.session.flush()
         return True
 
 
@@ -158,6 +159,7 @@ class RouteRepository(BaseRepository):
         if route is None:
             return False
         await self.session.delete(route)
+        await self.session.flush()
         return True
 
 
@@ -224,6 +226,18 @@ class ResultDestinationRepository(BaseRepository):
         destination = await self.session.get(ResultDestination, destination_id)
         if destination is not None:
             destination.enabled = enabled
+        return destination
+
+    async def update_meta(
+        self, destination_id: int, title: str | None = None, username: str | None = None
+    ) -> ResultDestination | None:
+        destination = await self.session.get(ResultDestination, destination_id)
+        if destination is None:
+            return None
+        if title is not None:
+            destination.title = title
+        if username is not None:
+            destination.username = username or None
         return destination
 
     async def set_required(self, destination_id: int, required: bool) -> ResultDestination | None:

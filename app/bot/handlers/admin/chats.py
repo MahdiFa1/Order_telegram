@@ -166,9 +166,9 @@ async def receive_chat_id(message: Message, state: FSMContext, services: Service
     async with session_scope() as session:
         repo = _repo(session, kind)
         if kind == "dest":
-            entity = await repo.add(OrderStatus(arg), chat_id, title, username)
+            await repo.add(OrderStatus(arg), chat_id, title, username)
         else:
-            entity = await repo.add(chat_id, title, username)
+            await repo.add(chat_id, title, username)
         await AuditRepository(session).log(
             AuditEvent.CONFIGURATION_CHANGED,
             actor_user_id=message.from_user.id if message.from_user else None,

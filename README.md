@@ -127,7 +127,7 @@ app/
 ├── config/                   # settings
 └── utils/                    # enums, time, logging
 
-tests/                        # 102 tests against a real PostgreSQL
+tests/                        # 158 tests against a real PostgreSQL
 alembic/                      # migrations
 docker/entrypoint.sh          # wait for DB → migrate → exec app
 ```
@@ -546,6 +546,9 @@ Coverage includes every scenario the specification requires:
 | Conflict blocks everything | `test_conflict_blocks_dispatch_and_acknowledgement` |
 | No forward header | `test_text_order_is_resent_with_number_and_no_forward_header` |
 | Startup, health, graceful shutdown | `test_main_run_starts_and_shuts_down_gracefully` |
+| Every admin keyboard packs, fits 64 bytes and round-trips | `test_every_keyboard_builds_and_round_trips` |
+| Route resolution explains why an order goes nowhere | `test_resolver_explains_a_disabled_route` |
+| Env super admins cannot be demoted or removed | `test_env_super_admin_cannot_be_removed` |
 
 ---
 

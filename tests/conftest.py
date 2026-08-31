@@ -9,7 +9,7 @@ behaviour. Point ``TEST_DATABASE_URL`` at a scratch database.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -79,7 +79,7 @@ async def db_engine():
 
 @pytest_asyncio.fixture
 async def session_factory(db_engine):
-    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     engine_module._engine = db_engine
     engine_module.set_session_factory(factory)
 
@@ -166,7 +166,6 @@ async def configure_rule(
     async with session_scope() as session:
         repo = RuleRepository(session)
         await repo.set_enabled(status, enabled)
-        rule = await repo.get_rule(status)
         for signal in SignalKey:
             await repo.set_signal_enabled(status, signal, signal in signals)
         await repo.set_mode(status, mode)

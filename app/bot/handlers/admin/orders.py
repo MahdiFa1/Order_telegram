@@ -15,6 +15,7 @@ from aiogram.types import (
 )
 
 from app.admin import texts
+from app.audit.formatting import format_page, truncate
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import order_actions, override_options
@@ -129,7 +130,8 @@ async def _order_screen(order_id: int) -> tuple[str, object]:
             source = channel.title if channel else None
         signals = await OrderRepository(session).list_signals(order_id)
         dispatches = await AcknowledgementRepository(session).list_dispatches(order_id)
-        return texts.order_detail(order, source, signals, dispatches), order_actions(order)
+        detail = texts.order_detail(order, source, signals, dispatches)
+        return truncate(detail), order_actions(order)
 
 
 @router.callback_query(OrderCB.filter(F.action == "view"), IsAdmin())
@@ -164,14 +166,14 @@ async def prompt_override(
 async def do_override(
     callback: CallbackQuery, callback_data: OrderCB, services: Services
 ) -> None:
-    status_value, flags = callback_data.arg.split(":")
+    flags = callback_data.flags
     await _apply_override(
         callback,
         services,
         callback_data.id,
-        OrderStatus(status_value),
-        flags[0] == "1",
-        flags[1] == "1",
+        OrderStatus(callback_data.arg),
+        flags[:1] == "1",
+        flags[1:2] == "1",
     )
 
 
@@ -205,14 +207,11 @@ async def retry_pipeline(callback: CallbackQuery, callback_data: OrderCB, servic
 async def order_audit(callback: CallbackQuery, callback_data: OrderCB) -> None:
     async with session_scope() as session:
         entries = await AuditRepository(session).for_order(callback_data.id)
-    lines = [f"📝 <b>Audit trail — order #{callback_data.id}</b>", ""]
-    if not entries:
-        lines.append("No entries.")
-    for entry in entries:
-        lines.append(
-            f"<code>{format_local(entry.created_at, '%m-%d %H:%M:%S')}</code> "
-            f"<b>{entry.event}</b>\n  {entry.message or ''}"
-        )
+    text = format_page(
+        entries,
+        f"📝 <b>Audit trail — order #{callback_data.id}</b>",
+        include_order=False,
+    )
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -223,4 +222,4 @@ async def order_audit(callback: CallbackQuery, callback_data: OrderCB) -> None:
             ]
         ]
     )
-    await render(callback, "\n".join(lines)[:4000], markup)
+    await render(callback, text, markup)

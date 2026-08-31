@@ -122,6 +122,7 @@ class RuleRepository(BaseRepository):
         if row is None:
             return False
         await self.session.delete(row)
+        await self.session.flush()
         return True
 
     async def toggle_text_pattern(self, pattern_id: int) -> RuleTextPattern | None:
@@ -163,6 +164,7 @@ class RuleRepository(BaseRepository):
         if row is None:
             return False
         await self.session.delete(row)
+        await self.session.flush()
         return True
 
     async def toggle_reaction(self, reaction_id: int) -> RuleReaction | None:

@@ -44,3 +44,7 @@ class CustomRange(StatesGroup):
 
 class EditSetting(StatesGroup):
     waiting_for_value = State()
+
+
+class AddAdmin(StatesGroup):
+    waiting_for_user_id = State()

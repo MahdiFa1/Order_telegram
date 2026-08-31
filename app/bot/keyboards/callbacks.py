@@ -56,10 +56,20 @@ class OrderCB(CallbackData, prefix="ord"):
     action: str
     id: int = 0
     arg: str = ""
+    #: Two-character switch for manual override: dispatch flag, acknowledge
+    #: flag (e.g. "10"). A separate field because aiogram forbids the ":"
+    #: separator inside a packed value.
+    flags: str = ""
 
 
 class SettingCB(CallbackData, prefix="set"):
     action: str
+    arg: str = ""
+
+
+class AdminCB(CallbackData, prefix="adm"):
+    action: str
+    id: int = 0
     arg: str = ""
 
 

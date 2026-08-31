@@ -17,6 +17,9 @@ class AdminRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_user_id_pk(self, admin_id: int) -> Admin | None:
+        return await self.session.get(Admin, admin_id)
+
     async def list_all(self) -> list[Admin]:
         result = await self.session.execute(select(Admin).order_by(Admin.id))
         return list(result.scalars())
@@ -80,6 +83,7 @@ class AdminRepository(BaseRepository):
         if admin is None or admin.from_env:
             return False
         await self.session.delete(admin)
+        await self.session.flush()
         return True
 
     async def touch_identity(
@@ -142,6 +146,7 @@ class OperatorRepository(BaseRepository):
         if operator is None:
             return False
         await self.session.delete(operator)
+        await self.session.flush()
         return True
 
     async def set_enabled(self, operator_id: int, enabled: bool) -> Operator | None:

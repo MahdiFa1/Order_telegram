@@ -63,17 +63,15 @@ async def test_report_rates_use_completed_orders_only(destinations):
     assert report.failure_rate == pytest.approx(25.0)
 
 
-async def test_report_matches_the_spec_example(destinations):
-    """120 success + 20 failed => 85.71% / 14.29%."""
-    services = destinations
-    report_values = {"success": 120, "failed": 20}
+async def test_report_matches_the_spec_example():
+    """150 orders: 120 success + 20 failed => 85.71% / 14.29%."""
     from app.reports.service import OrderReport
 
     report = OrderReport(
         period=ReportPeriod.today(),
         total=150,
-        success=report_values["success"],
-        failed=report_values["failed"],
+        success=120,
+        failed=20,
         pending=8,
         conflict=2,
     )

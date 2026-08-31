@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.keyboards.callbacks import (
     AckCB,
+    AdminCB,
     AuditCB,
     ChatCB,
     Nav,
@@ -512,24 +513,19 @@ def order_actions(order) -> InlineKeyboardMarkup:
 
 def override_options(order_id: int, status: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="Dispatch + Acknowledge",
-            callback_data=OrderCB(action="mark_go", id=order_id, arg=f"{status}:11").pack(),
+    for label, flags in (
+        ("Dispatch + Acknowledge", "11"),
+        ("Dispatch only", "10"),
+        ("Status only", "00"),
+    ):
+        builder.row(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=OrderCB(
+                    action="mark_go", id=order_id, arg=status, flags=flags
+                ).pack(),
+            )
         )
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="Dispatch only",
-            callback_data=OrderCB(action="mark_go", id=order_id, arg=f"{status}:10").pack(),
-        )
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="Status only",
-            callback_data=OrderCB(action="mark_go", id=order_id, arg=f"{status}:00").pack(),
-        )
-    )
     builder.row(
         InlineKeyboardButton(
             text="⬅️ Cancel", callback_data=OrderCB(action="view", id=order_id).pack()
@@ -569,7 +565,61 @@ def settings_menu(values: dict[str, str | None]) -> InlineKeyboardMarkup:
             callback_data=SettingCB(action="notifications").pack(),
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text="👮 Admins", callback_data=AdminCB(action="list").pack()
+        )
+    )
     builder.row(back_button("main"))
+    return builder.as_markup()
+
+
+def admin_list(admins) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for admin in admins:
+        name = admin.display_name or (
+            f"@{admin.username}" if admin.username else str(admin.telegram_user_id)
+        )
+        badge = "👑" if admin.role == "SUPER_ADMIN" else "👮"
+        lock = " 🔒" if admin.from_env else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{badge} {name}{lock}",
+                callback_data=AdminCB(action="view", id=admin.id).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text="➕ Add Admin", callback_data=AdminCB(action="add").pack())
+    )
+    builder.row(back_button("settings"))
+    return builder.as_markup()
+
+
+def admin_detail(admin) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if not admin.from_env:
+        builder.row(
+            InlineKeyboardButton(
+                text=(
+                    "⬇️ Demote to Admin"
+                    if admin.role == "SUPER_ADMIN"
+                    else "⬆️ Promote to Super Admin"
+                ),
+                callback_data=AdminCB(action="role", id=admin.id).pack(),
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="🔴 Disable" if admin.enabled else "🟢 Enable",
+                callback_data=AdminCB(action="toggle", id=admin.id).pack(),
+            ),
+            InlineKeyboardButton(
+                text="🗑 Remove", callback_data=AdminCB(action="delete", id=admin.id).pack()
+            ),
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Back", callback_data=AdminCB(action="list").pack())
+    )
     return builder.as_markup()
 
 

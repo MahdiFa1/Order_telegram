@@ -32,7 +32,6 @@ from app.utils.enums import (
     AcknowledgementStatus,
     AuditEvent,
     OrderStatus,
-    RESULT_STATUSES,
     TriggerType,
 )
 from app.utils.logging import get_logger
