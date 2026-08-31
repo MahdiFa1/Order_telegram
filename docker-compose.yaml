@@ -49,7 +49,10 @@ services:
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       SUPERADMIN_IDS: ${SUPERADMIN_IDS}
-      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-telegram_orders}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-telegram_orders}"
+      # DATABASE_URL is deliberately NOT set here. Interpolating the password
+      # into a connection string breaks whenever it contains '@', '/', '?' or
+      # '#'. The application builds the DSN from the POSTGRES_* parts below and
+      # escapes each one, so any password works.
       POSTGRES_DB: ${POSTGRES_DB:-telegram_orders}
       POSTGRES_USER: ${POSTGRES_USER:-telegram_orders}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

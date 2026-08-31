@@ -53,9 +53,9 @@ else
 
   # Generate a strong database password rather than shipping a default.
   if command -v openssl >/dev/null 2>&1; then
-    DB_PASSWORD="$(openssl rand -base64 33 | tr -d '\n/+=' | cut -c1-32)"
+    DB_PASSWORD="$(openssl rand -hex 24)"
   else
-    DB_PASSWORD="$(head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-32)"
+    DB_PASSWORD="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   fi
 
   cat > .env <<ENVEOF
@@ -68,7 +68,8 @@ POSTGRES_PASSWORD=${DB_PASSWORD}
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 
-DATABASE_URL=postgresql+asyncpg://telegram_orders:${DB_PASSWORD}@postgres:5432/telegram_orders
+# Assembled by the application from the POSTGRES_* values above.
+DATABASE_URL=
 
 APP_ENV=production
 LOG_LEVEL=INFO

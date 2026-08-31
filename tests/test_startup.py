@@ -510,15 +510,14 @@ async def test_compose_pins_the_database_hostname_with_an_alias():
     """DATABASE_URL dials 'postgres'; platforms that rename services break
     that unless the alias is declared explicitly."""
     from pathlib import Path
-    from urllib.parse import urlsplit
 
     yaml = pytest.importorskip("yaml")
     root = Path(__file__).resolve().parents[1]
     parsed = yaml.safe_load((root / "docker-compose.yaml").read_text())
 
     aliases = parsed["services"]["postgres"]["networks"]["default"]["aliases"]
-    dsn = parsed["services"]["bot"]["environment"]["DATABASE_URL"]
-    host = urlsplit(dsn.replace("${POSTGRES_PASSWORD}", "pw")).hostname
+    # The DSN is assembled by the app from POSTGRES_HOST, not by compose.
+    host = parsed["services"]["bot"]["environment"]["POSTGRES_HOST"]
 
     assert host in aliases, (
         f"the bot dials {host!r} but postgres only answers to {aliases}"

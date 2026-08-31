@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -82,14 +83,52 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":
+        """Build the DSN from its parts, escaping each one.
+
+        A password may legitimately contain '@', '/', '?' or '#'. Pasting one
+        into a connection string by hand silently corrupts it -- '@' in
+        particular ends the userinfo section, so the rest of the password is
+        read as the hostname and every connection fails DNS. ``URL.create``
+        keeps the components separate and quotes them on render.
+        """
         if not self.database_url:
             object.__setattr__(
                 self,
                 "database_url",
-                (
-                    f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-                    f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-                ),
+                URL.create(
+                    "postgresql+asyncpg",
+                    username=self.postgres_user,
+                    password=self.postgres_password,
+                    host=self.postgres_host,
+                    port=self.postgres_port,
+                    database=self.postgres_db,
+                ).render_as_string(hide_password=False),
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_a_corrupted_dsn(self) -> "Settings":
+        """Catch a hand-built DATABASE_URL whose password broke the host."""
+        if not self.database_url:
+            return self
+        try:
+            host = make_url(self.database_url).host or ""
+        except Exception:  # noqa: BLE001 - reported below with context
+            raise ValueError(
+                "DATABASE_URL could not be parsed. If your database password "
+                "contains special characters, unset DATABASE_URL and let the "
+                "POSTGRES_* variables build it instead."
+            ) from None
+        # A hostname can only hold letters, digits, hyphens and dots. Anything
+        # else means the password leaked into the host.
+        illegal = {c for c in host if not (c.isalnum() or c in "-._")}
+        if illegal:
+            raise ValueError(
+                f"DATABASE_URL is malformed: the host reads {host!r}, which "
+                f"contains {''.join(sorted(illegal))!r}. This happens when the "
+                "database password contains a special character such as '@'. "
+                "Unset DATABASE_URL and set POSTGRES_PASSWORD instead -- the "
+                "application will assemble and escape the DSN itself."
             )
         return self
 

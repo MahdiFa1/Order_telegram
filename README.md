@@ -370,7 +370,7 @@ container for Docker/Coolify health checks.
 | `POSTGRES_PASSWORD` | ✅ | — | Database password |
 | `POSTGRES_HOST` | | `postgres` | Database host |
 | `POSTGRES_PORT` | | `5432` | Database port |
-| `DATABASE_URL` | | assembled | Full async DSN; overrides the parts above |
+| `DATABASE_URL` | | assembled | Leave empty. The app assembles and escapes the DSN from the `POSTGRES_*` parts, so any password works. Set it only to point at an external database. |
 | `APP_ENV` | | `production` | Environment label |
 | `LOG_LEVEL` | | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `LOG_FORMAT` | | `json` | `json` or `console` |
