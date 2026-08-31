@@ -18,8 +18,12 @@ services:
       # Named volume => orders survive every redeploy and container rebuild.
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
+      # Block sequence, not a flow sequence on the following line: the Go
+      # parser in `docker compose` accepts both, but stricter YAML parsers
+      # (including the PHP one Coolify reads this file with) reject the latter.
       test:
-        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-telegram_orders} -d ${POSTGRES_DB:-telegram_orders}"]
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-telegram_orders} -d ${POSTGRES_DB:-telegram_orders}
       interval: 10s
       timeout: 5s
       retries: 10

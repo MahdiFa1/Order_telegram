@@ -316,3 +316,40 @@ async def test_empty_superadmins_warns_rather_than_crashing(session_factory, mon
         pass
 
     assert "no_super_admins_configured" in warnings
+
+
+async def test_compose_file_avoids_flow_sequences():
+    """Stricter YAML parsers than docker's reject a flow sequence written on
+    the line after its key. Coolify reads this file with one of them."""
+    import re
+    from pathlib import Path
+
+    compose = Path(__file__).resolve().parents[1] / "docker-compose.yaml"
+    for number, line in enumerate(compose.read_text().splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert not stripped.startswith("["), (
+            f"docker-compose.yaml:{number} starts a flow sequence on its own line"
+        )
+        assert not re.search(r":\s*\[", line), (
+            f"docker-compose.yaml:{number} uses an inline flow sequence"
+        )
+
+
+async def test_compose_file_parses_with_a_strict_yaml_parser():
+    """A second opinion from a non-Go parser, mirroring Coolify's."""
+    from pathlib import Path
+
+    yaml = pytest.importorskip("yaml")
+    compose = Path(__file__).resolve().parents[1] / "docker-compose.yaml"
+    parsed = yaml.safe_load(compose.read_text())
+
+    assert set(parsed["services"]) == {"bot", "postgres"}
+    assert parsed["services"]["postgres"]["healthcheck"]["test"][0] == "CMD-SHELL"
+    # The named volume is what keeps orders across a redeploy.
+    assert "postgres_data" in parsed["volumes"]
+    assert (
+        parsed["services"]["postgres"]["volumes"][0]
+        == "postgres_data:/var/lib/postgresql/data"
+    )
