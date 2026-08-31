@@ -9,7 +9,9 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.utils.token import TokenValidationError
 
 from app.bot.handlers import root_router
 from app.bot.middlewares import (
@@ -71,10 +73,19 @@ async def run(settings: Settings) -> None:
     init_engine(settings)
     session_factory = get_session_factory()
 
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    try:
+        bot = Bot(
+            token=settings.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+    except TokenValidationError as error:
+        # Wrong shape entirely (a stray quote, a truncated paste, a username).
+        raise SystemExit(
+            "BOT_TOKEN is malformed. It must look like "
+            "'123456789:AA...' exactly as @BotFather sent it, with no quotes "
+            "or spaces. Fix it in your deployment's environment variables and "
+            "redeploy."
+        ) from error
     services = build_services(bot, session_factory, settings)
 
     health = HealthServer(settings.health_host, settings.health_port)
@@ -94,7 +105,17 @@ async def run(settings: Settings) -> None:
     try:
         await bootstrap(session_factory, settings)
 
-        me = await bot.get_me()
+        try:
+            me = await bot.get_me()
+        except TelegramUnauthorizedError as error:
+            # Right shape, but Telegram rejected it: wrong token, or it was
+            # revoked with /revoke in @BotFather.
+            raise SystemExit(
+                "BOT_TOKEN was rejected by Telegram (401 Unauthorized). The "
+                "token is either wrong or has been revoked. Get a fresh one "
+                "from @BotFather, update your deployment's environment "
+                "variables and redeploy."
+            ) from error
         services.bot_user_id = me.id
         health.bot_ready = True
         logger.info("bot_started", username=me.username, bot_id=me.id)

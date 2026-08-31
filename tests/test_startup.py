@@ -353,3 +353,59 @@ async def test_compose_file_parses_with_a_strict_yaml_parser():
         parsed["services"]["postgres"]["volumes"][0]
         == "postgres_data:/var/lib/postgresql/data"
     )
+
+
+async def test_malformed_bot_token_exits_with_guidance(monkeypatch):
+    """A truncated or quoted paste must not crash-loop with a traceback."""
+    import app.main as main_module
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_token", "not-a-real-token", raising=False)
+
+    with pytest.raises(SystemExit) as excinfo:
+        await main_module.run(settings)
+
+    message = str(excinfo.value)
+    assert "BOT_TOKEN is malformed" in message
+    assert "@BotFather" in message
+
+
+async def test_rejected_bot_token_exits_with_guidance(session_factory, monkeypatch):
+    """Correct shape but Telegram answers 401: say so, don't dump a traceback."""
+    from aiogram.exceptions import TelegramUnauthorizedError
+    from aiogram.methods import GetMe
+
+    import app.main as main_module
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "health_port", _free_port(), raising=False)
+    monkeypatch.setattr(settings, "health_host", "127.0.0.1", raising=False)
+
+    class RejectingBot:
+        def __init__(self, *args, **kwargs) -> None:
+            self.session = SimpleNamespace(close=self._close)
+
+        async def _close(self) -> None:
+            return None
+
+        async def get_me(self):
+            raise TelegramUnauthorizedError(method=GetMe(), message="Unauthorized")
+
+    class StubDispatcher:
+        def include_router(self, router) -> None:
+            return None
+
+    monkeypatch.setattr(main_module, "Bot", RejectingBot)
+    # root_router can only attach to one Dispatcher per process, and an
+    # earlier test already did that.
+    monkeypatch.setattr(main_module, "build_dispatcher", lambda s: StubDispatcher())
+    monkeypatch.setattr(main_module, "init_engine", lambda s: None)
+    monkeypatch.setattr(main_module, "get_session_factory", lambda: session_factory)
+    monkeypatch.setattr(main_module, "dispose_engine", lambda: asyncio.sleep(0))
+
+    with pytest.raises(SystemExit) as excinfo:
+        await main_module.run(settings)
+
+    message = str(excinfo.value)
+    assert "rejected by Telegram" in message
+    assert "revoked" in message
