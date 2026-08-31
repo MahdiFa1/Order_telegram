@@ -223,3 +223,96 @@ async def test_main_run_starts_and_shuts_down_gracefully(session_factory, monkey
     probe = HealthServer("127.0.0.1", port)
     await probe.start()
     await probe.stop()
+
+
+async def test_compose_file_parses_without_environment_variables():
+    """Coolify parses docker-compose.yaml before its env vars are saved.
+
+    A `${VAR:?msg}` guard makes that parse fail outright, so the compose file
+    must interpolate cleanly with nothing set. Runtime checks below carry the
+    safety instead.
+    """
+    import re
+    from pathlib import Path
+
+    compose = Path(__file__).resolve().parents[1] / "docker-compose.yaml"
+    text = compose.read_text()
+    guarded = re.findall(r"\$\{[A-Z_]+:\?[^}]*\}", text)
+    assert guarded == [], f"compose uses fail-on-missing interpolation: {guarded}"
+
+
+async def test_missing_bot_token_fails_fast_with_a_clear_message(monkeypatch):
+    import app.main as main_module
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_token", "", raising=False)
+    with pytest.raises(SystemExit) as excinfo:
+        await main_module.run(settings)
+    assert "BOT_TOKEN is not set" in str(excinfo.value)
+
+
+async def test_empty_superadmins_warns_rather_than_crashing(session_factory, monkeypatch):
+    """An empty SUPERADMIN_IDS must not stop the bot, but must be loud."""
+    import app.main as main_module
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "superadmin_ids", (), raising=False)
+    monkeypatch.setattr(settings, "health_port", _free_port(), raising=False)
+    monkeypatch.setattr(settings, "health_host", "127.0.0.1", raising=False)
+
+    warnings: list[str] = []
+
+    class SpyLogger:
+        def warning(self, event, **kw):
+            warnings.append(event)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    monkeypatch.setattr(main_module, "logger", SpyLogger())
+
+    started = asyncio.Event()
+
+    class StubBot:
+        def __init__(self, *args, **kwargs) -> None:
+            self.session = SimpleNamespace(close=self._close)
+
+        async def _close(self) -> None:
+            return None
+
+        async def get_me(self):
+            return SimpleNamespace(id=999, username="stub_bot")
+
+    class StubDispatcher:
+        def __init__(self, *a, **k) -> None:
+            self._stop = asyncio.Event()
+
+        def include_router(self, router) -> None:
+            return None
+
+        async def start_polling(self, *a, **k) -> None:
+            started.set()
+            try:
+                await self._stop.wait()
+            except asyncio.CancelledError:
+                pass
+
+        async def stop_polling(self) -> None:
+            self._stop.set()
+
+    monkeypatch.setattr(main_module, "Bot", StubBot)
+    monkeypatch.setattr(main_module, "build_dispatcher", lambda s: StubDispatcher())
+    monkeypatch.setattr(main_module, "init_engine", lambda s: None)
+    monkeypatch.setattr(main_module, "get_session_factory", lambda: session_factory)
+    monkeypatch.setattr(main_module, "dispose_engine", lambda: asyncio.sleep(0))
+
+    task = asyncio.create_task(main_module.run(settings))
+    # It must still reach polling: an empty admin list is a warning, not fatal.
+    await asyncio.wait_for(started.wait(), timeout=10)
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=10)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+
+    assert "no_super_admins_configured" in warnings

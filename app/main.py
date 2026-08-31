@@ -51,8 +51,22 @@ def build_dispatcher(services) -> Dispatcher:
 
 
 async def run(settings: Settings) -> None:
+    # The compose file cannot enforce these (see its header comment), so the
+    # checks live here, where a misconfiguration is reported clearly instead of
+    # failing somewhere deep in the Telegram client.
     if not settings.bot_token:
-        raise SystemExit("BOT_TOKEN is not set. Copy .env.example to .env and fill it in.")
+        raise SystemExit(
+            "BOT_TOKEN is not set. Set it in your deployment's environment "
+            "variables (or copy .env.example to .env locally) and restart."
+        )
+    if not settings.superadmin_ids:
+        logger.warning(
+            "no_super_admins_configured",
+            message=(
+                "SUPERADMIN_IDS is empty: nobody will be able to open the admin "
+                "panel. Set it to your numeric Telegram user id and restart."
+            ),
+        )
 
     init_engine(settings)
     session_factory = get_session_factory()
