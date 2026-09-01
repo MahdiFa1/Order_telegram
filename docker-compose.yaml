@@ -1,9 +1,11 @@
 # BOT_TOKEN, SUPERADMIN_IDS and POSTGRES_PASSWORD are required at RUN time,
-# but are intentionally interpolated without the `:?` guard: platforms such as
-# Coolify parse this file before their environment variables are saved, and the
-# guard would fail that parse. The bot refuses to start with an empty
-# BOT_TOKEN, warns loudly with an empty SUPERADMIN_IDS, and the postgres image
-# refuses to initialise without a password -- so nothing starts misconfigured.
+# but every interpolation here carries a default and none uses the `:?` guard:
+# platforms such as Coolify parse this file before their environment variables
+# are saved, and an unresolvable variable fails that parse. Substitution is
+# therefore always total -- worst case a value is empty. Safety lives at
+# runtime instead: the bot refuses to start with an empty BOT_TOKEN, warns
+# loudly with an empty SUPERADMIN_IDS, and the postgres image refuses to
+# initialise without a password, so nothing starts misconfigured.
 services:
   postgres:
     image: postgres:16-alpine
@@ -11,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-telegram_orders}
       POSTGRES_USER: ${POSTGRES_USER:-telegram_orders}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       TZ: ${TZ:-Asia/Tehran}
       PGTZ: ${TZ:-Asia/Tehran}
     volumes:
@@ -47,15 +49,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      BOT_TOKEN: ${BOT_TOKEN}
-      SUPERADMIN_IDS: ${SUPERADMIN_IDS}
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      SUPERADMIN_IDS: ${SUPERADMIN_IDS:-}
       # DATABASE_URL is deliberately NOT set here. Interpolating the password
       # into a connection string breaks whenever it contains '@', '/', '?' or
       # '#'. The application builds the DSN from the POSTGRES_* parts below and
       # escapes each one, so any password works.
       POSTGRES_DB: ${POSTGRES_DB:-telegram_orders}
       POSTGRES_USER: ${POSTGRES_USER:-telegram_orders}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       APP_ENV: ${APP_ENV:-production}
