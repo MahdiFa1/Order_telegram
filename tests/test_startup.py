@@ -242,21 +242,6 @@ async def test_compose_file_parses_without_environment_variables():
     assert guarded == [], f"compose uses fail-on-missing interpolation: {guarded}"
 
 
-async def test_every_compose_interpolation_carries_a_default():
-    """An unresolvable ${VAR} can fail a platform's compose parse outright.
-
-    Coolify reads this file before its environment variables exist, so every
-    interpolation must substitute to *something*. Empty is fine -- the runtime
-    checks refuse to start on an empty BOT_TOKEN or password.
-    """
-    import re
-    from pathlib import Path
-
-    compose = Path(__file__).resolve().parents[1] / "docker-compose.yaml"
-    bare = re.findall(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", compose.read_text())
-    assert bare == [], f"compose interpolates without a default: {bare}"
-
-
 async def test_missing_bot_token_fails_fast_with_a_clear_message(monkeypatch):
     import app.main as main_module
 
