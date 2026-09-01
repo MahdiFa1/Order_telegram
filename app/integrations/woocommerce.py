@@ -11,6 +11,7 @@ WooCommerce REST API expects for consumer key/secret pairs.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import aiohttp
@@ -24,6 +25,29 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 class WooCommerceError(Exception):
     """A store call failed in a way worth reporting to an admin."""
+
+
+def describe_error_body(body: str) -> str:
+    """The store's own explanation, in readable form.
+
+    WooCommerce answers errors with JSON whose ``message`` is written in the
+    store's language and escaped as JSON unicode escapes. Showing that raw
+    makes a Persian
+    message unreadable for the admin who has to act on it, so the message is
+    decoded and used on its own; anything unexpected falls back to the body.
+    """
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return body[:300]
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or "").strip()
+        code = str(payload.get("code") or "").strip()
+        if message and code:
+            return f"{message} ({code})"
+        if message:
+            return message
+    return body[:300]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,13 +86,12 @@ class WooCommerceClient:
             body = await response.text()
             if response.status >= 400:
                 # WooCommerce returns a JSON body with "message" on errors.
-                detail = body[:300]
-                raise WooCommerceError(f"HTTP {response.status}: {detail}")
+                raise WooCommerceError(
+                    f"HTTP {response.status}: {describe_error_body(body)}"
+                )
             if not body:
                 return None
             try:
-                import json
-
                 return json.loads(body)
             except ValueError as error:
                 raise WooCommerceError(f"store returned non-JSON: {body[:200]}") from error

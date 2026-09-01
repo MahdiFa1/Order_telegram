@@ -625,3 +625,26 @@ async def test_a_conflicted_order_updates_nothing(destinations):
     assert (await get_order(order_id)).status == OrderStatus.CONFLICT
     assert client.calls == []
     assert services.gateway.messages_in(SUCCESS_CHAT_ID) == []
+
+
+# --- readable store errors -------------------------------------------------
+def test_store_error_is_shown_in_the_store_s_own_words():
+    """A WooCommerce error must reach the admin readable, not as escapes."""
+    from app.integrations.woocommerce import describe_error_body
+
+    body = (
+        '{"code":"woocommerce_rest_authentication_error",'
+        '"message":"\\u06a9\\u0644\\u06cc\\u062f API \\u0627\\u0631\\u0627\\u0626\\u0647'
+        ' \\u0634\\u062f\\u0647 \\u0645\\u062c\\u0648\\u0632 \\u062e\\u0648\\u0627\\u0646'
+        '\\u062f\\u0646 \\u0646\\u062f\\u0627\\u0631\\u062f","data":{"status":401}}'
+    )
+    described = describe_error_body(body)
+    assert "کلید API ارائه شده مجوز خواندن ندارد" in described
+    assert "woocommerce_rest_authentication_error" in described
+    assert "\\u06a9" not in described
+
+
+def test_a_non_json_store_error_is_passed_through():
+    from app.integrations.woocommerce import describe_error_body
+
+    assert describe_error_body("<html>502 Bad Gateway</html>") == "<html>502 Bad Gateway</html>"
