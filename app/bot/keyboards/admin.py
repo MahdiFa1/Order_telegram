@@ -9,6 +9,8 @@ from app.bot.keyboards.callbacks import (
     AckCB,
     AdminCB,
     AuditCB,
+    ResultCB,
+    SourceCB,
     ChatCB,
     Nav,
     OperatorCB,
@@ -576,6 +578,11 @@ def settings_menu(values: dict[str, str | None]) -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
+            text=t.BTN_ORDER_NUMBER, callback_data=SettingCB(action="order_number").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=t.BTN_ADMINS, callback_data=AdminCB(action="list").pack()
         )
     )
@@ -644,6 +651,215 @@ def counter_scope_picker() -> InlineKeyboardMarkup:
                 callback_data=SettingCB(action="set_scope", arg=scope.value).pack(),
             )
         )
+    builder.row(back_button("settings"))
+    return builder.as_markup()
+
+
+# ---------------------------------------------------------------------------
+# Source-message reactions
+# ---------------------------------------------------------------------------
+def source_reactions_menu(configs) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for config in configs:
+        name = t.SOURCE_STAGE_NAMES.get(config.stage, config.stage)
+        emoji = config.reaction_value or t.DASH
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{toggle_icon(config.enabled)} {name} · {emoji}",
+                callback_data=SourceCB(action="stage", stage=config.stage).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_PROGRESS_REACTIONS,
+            callback_data=SourceCB(action="progress").pack(),
+        )
+    )
+    builder.row(back_button("main"))
+    return builder.as_markup()
+
+
+def source_stage_detail(config) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(config.enabled),
+            callback_data=SourceCB(action="toggle", stage=config.stage).pack(),
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_CHANGE_REACTION,
+            callback_data=SourceCB(action="set", stage=config.stage).pack(),
+        ),
+    )
+    builder.row(back_button("source_reactions"))
+    return builder.as_markup()
+
+
+def progress_reaction_list(reactions) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for reaction in reactions:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{toggle_icon(reaction.enabled)} {reaction.emoji}",
+                callback_data=SourceCB(action="p_toggle", id=reaction.id).pack(),
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=SourceCB(action="p_del", id=reaction.id).pack(),
+            ),
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_ADD_REACTION, callback_data=SourceCB(action="p_add").pack()
+        )
+    )
+    builder.row(back_button("source_reactions"))
+    return builder.as_markup()
+
+
+# ---------------------------------------------------------------------------
+# Result content: mode, appended text, WooCommerce
+# ---------------------------------------------------------------------------
+def result_content_menu(mode: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_RESULT_MODE.format(
+                value=t.RESULT_CONTENT_MODE_NAMES.get(mode, mode)
+            ),
+            callback_data=ResultCB(action="mode").pack(),
+        )
+    )
+    for status, icon in ((OrderStatus.SUCCESS, "✅"), (OrderStatus.FAILED, "❌")):
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{icon} {t.BTN_APPEND_TEXT} · {t.status_name(status)}",
+                callback_data=ResultCB(action="text", status=status).pack(),
+            )
+        )
+    for status, icon in ((OrderStatus.SUCCESS, "✅"), (OrderStatus.FAILED, "❌")):
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{icon} {t.BTN_WOO} · {t.status_name(status)}",
+                callback_data=ResultCB(action="woo", status=status).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_WOO_STORE, callback_data=ResultCB(action="store").pack()
+        )
+    )
+    builder.row(back_button("main"))
+    return builder.as_markup()
+
+
+def result_mode_picker() -> InlineKeyboardMarkup:
+    from app.utils.enums import ResultContentMode
+
+    builder = InlineKeyboardBuilder()
+    for mode in ResultContentMode:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.RESULT_CONTENT_MODE_NAMES.get(mode.value, mode.value),
+                callback_data=ResultCB(action="set_mode", arg=mode.value).pack(),
+            )
+        )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def append_text_detail(status: OrderStatus, config) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(config.append_text_enabled),
+            callback_data=ResultCB(action="text_toggle", status=status).pack(),
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_EDIT_TITLE,
+            callback_data=ResultCB(action="text_set", status=status).pack(),
+        ),
+    )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def woo_detail(status: OrderStatus, config) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(config.woo_enabled),
+            callback_data=ResultCB(action="woo_toggle", status=status).pack(),
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_WOO_STATUS,
+            callback_data=ResultCB(action="woo_status", status=status).pack(),
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"{toggle_icon(config.woo_note_enabled)} {t.BTN_WOO_NOTE}",
+            callback_data=ResultCB(action="woo_note_toggle", status=status).pack(),
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_EDIT_TITLE,
+            callback_data=ResultCB(action="woo_note_set", status=status).pack(),
+        ),
+    )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def woo_store_detail() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_WOO_URL, callback_data=ResultCB(action="store_url").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_WOO_KEY, callback_data=ResultCB(action="store_key").pack()
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_WOO_SECRET, callback_data=ResultCB(action="store_secret").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_WOO_TEST, callback_data=ResultCB(action="store_test").pack()
+        )
+    )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def order_number_detail(enabled: bool, delete_invalid: bool, length: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(enabled),
+            callback_data=SettingCB(action="num_toggle").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_ORDER_NUMBER_LENGTH.format(value=t.fa_digits(length)),
+            callback_data=SettingCB(action="num_length").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_ORDER_NUMBER_DELETE.format(value=t.yes_no(delete_invalid)),
+            callback_data=SettingCB(action="num_delete").pack(),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_ORDER_NUMBER_MESSAGE,
+            callback_data=SettingCB(action="num_message").pack(),
+        )
+    )
     builder.row(back_button("settings"))
     return builder.as_markup()
 

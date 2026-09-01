@@ -11,13 +11,23 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import Setting
 from app.database.repositories.base import BaseRepository
-from app.utils.enums import CounterScope, SettingKey
+from app.utils.enums import CounterScope, ResultContentMode, SettingKey
 
 DEFAULTS: dict[str, str] = {
     SettingKey.COUNTER_SCOPE: CounterScope.GLOBAL,
     SettingKey.ORDER_PREFIX: "order",
     SettingKey.ORDER_NUMBER_FORMAT: "{prefix}{number}",
     SettingKey.ADMIN_NOTIFICATIONS_ENABLED: "true",
+    SettingKey.ORDER_NUMBER_ENABLED: "false",
+    SettingKey.ORDER_NUMBER_LENGTH: "7",
+    SettingKey.ORDER_NUMBER_DELETE_INVALID: "true",
+    SettingKey.ORDER_NUMBER_REJECT_MESSAGE: (
+        "{name} عزیز، شماره سفارش قرار نگرفته یا اشتباه است."
+    ),
+    SettingKey.RESULT_CONTENT_MODE: ResultContentMode.ORDER_AND_ATTACHMENTS,
+    SettingKey.WOO_BASE_URL: "",
+    SettingKey.WOO_CONSUMER_KEY: "",
+    SettingKey.WOO_CONSUMER_SECRET: "",
 }
 
 
@@ -62,3 +72,26 @@ class SettingRepository(BaseRepository):
 
     async def order_number_format(self) -> str:
         return await self.get(SettingKey.ORDER_NUMBER_FORMAT) or "{prefix}{number}"
+
+    async def store_number_length(self) -> int:
+        from app.orders.order_number import DEFAULT_LENGTH, clamp_length
+
+        raw = await self.get(SettingKey.ORDER_NUMBER_LENGTH)
+        try:
+            return clamp_length(int(raw)) if raw else DEFAULT_LENGTH
+        except ValueError:
+            return DEFAULT_LENGTH
+
+    async def result_content_mode(self) -> ResultContentMode:
+        raw = await self.get(SettingKey.RESULT_CONTENT_MODE)
+        try:
+            return ResultContentMode(raw)
+        except ValueError:
+            return ResultContentMode.ORDER_AND_ATTACHMENTS
+
+    async def woo_credentials(self) -> tuple[str, str, str]:
+        return (
+            (await self.get(SettingKey.WOO_BASE_URL) or "").strip().rstrip("/"),
+            (await self.get(SettingKey.WOO_CONSUMER_KEY) or "").strip(),
+            (await self.get(SettingKey.WOO_CONSUMER_SECRET) or "").strip(),
+        )

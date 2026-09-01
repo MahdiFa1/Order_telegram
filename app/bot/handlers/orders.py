@@ -47,6 +47,10 @@ async def handle_edited_channel_post(message: Message) -> None:
 async def _ingest(message: Message, services: Services) -> None:
     payload = extract_payload(message)
     result = await services.orders.ingest(payload)
+    if result.rejected and result.rejection_text:
+        # Tell the author what is wrong; the post never reaches a work group.
+        await services.orders.deliver_rejection(payload, result.rejection_text)
+        return
     if result.order_id is None:
         logger.info(
             "source_message_skipped",

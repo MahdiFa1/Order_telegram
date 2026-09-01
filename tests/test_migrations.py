@@ -126,5 +126,7 @@ async def test_migrations_run_against_a_hostile_password(db_engine):
             )
     finally:
         await engine.dispose()
-    # 25 application tables plus alembic_version.
-    assert count == 26
+    from app.database.models import Base
+
+    # Every model, plus Alembic's own bookkeeping table.
+    assert count == len(Base.metadata.tables) + 1

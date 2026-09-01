@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     InputMediaAudio,
     InputMediaDocument,
@@ -34,6 +35,11 @@ _MEDIA_CLASSES = {
     "video": InputMediaVideo,
     "document": InputMediaDocument,
     "audio": InputMediaAudio,
+    # Attachments are stored with the ContentType spelling.
+    ContentType.PHOTO.value: InputMediaPhoto,
+    ContentType.VIDEO.value: InputMediaVideo,
+    ContentType.DOCUMENT.value: InputMediaDocument,
+    ContentType.AUDIO.value: InputMediaAudio,
 }
 
 
@@ -147,6 +153,98 @@ class TelegramGateway:
             base_delay=self.settings.telegram_retry_base_delay,
             operation_name="send_text",
         )
+
+    async def send_reply(self, chat_id: int, reply_to_message_id: int, text: str) -> int:
+        """Reply to a specific message; falls back to a plain send if the
+        message is already gone (a rejected post we just deleted)."""
+
+        async def call() -> int:
+            try:
+                message = await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=reply_to_message_id,
+                    disable_web_page_preview=True,
+                )
+            except TelegramBadRequest as error:
+                if "not found" not in str(error).lower():
+                    raise
+                message = await self.bot.send_message(
+                    chat_id=chat_id, text=text, disable_web_page_preview=True
+                )
+            return message.message_id
+
+        return await with_retry(
+            call,
+            max_attempts=self.settings.telegram_max_retries,
+            base_delay=self.settings.telegram_retry_base_delay,
+            operation_name="send_reply",
+        )
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        """Delete a message. ``False`` when Telegram refuses (too old, no
+        rights); the caller carries on rather than failing the whole intake."""
+        try:
+            await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception as error:  # noqa: BLE001 - reported by the caller
+            logger.warning(
+                "delete_message_failed",
+                chat_id=chat_id,
+                message_id=message_id,
+                error=str(error),
+            )
+            return False
+        return True
+
+    async def send_attachments(
+        self, chat_id: int, attachments, caption: str | None = None
+    ) -> list[int]:
+        """Re-send operator media from stored file ids.
+
+        Photos and videos go as one album when there is more than one, which
+        is how they were sent in the work group.
+        """
+        if not attachments:
+            return []
+
+        groupable = [a for a in attachments if a.content_type in _MEDIA_CLASSES]
+        if len(groupable) == len(attachments) and len(attachments) > 1:
+            media = []
+            for index, attachment in enumerate(attachments):
+                cls = _MEDIA_CLASSES[attachment.content_type]
+                kwargs: dict[str, Any] = {"media": attachment.file_id}
+                if index == 0 and caption:
+                    kwargs["caption"] = caption
+                media.append(cls(**kwargs))
+
+            async def send_group() -> list[int]:
+                sent = await self.bot.send_media_group(chat_id=chat_id, media=media)
+                return [m.message_id for m in sent]
+
+            return await with_retry(
+                send_group,
+                max_attempts=self.settings.telegram_max_retries,
+                base_delay=self.settings.telegram_retry_base_delay,
+                operation_name="send_attachment_group",
+            )
+
+        message_ids: list[int] = []
+        for index, attachment in enumerate(attachments):
+            payload = {
+                "content_type": attachment.content_type,
+                "file_id": attachment.file_id,
+                "caption": caption if index == 0 else attachment.caption,
+                "caption_entities": None,
+            }
+            message_ids.append(
+                await with_retry(
+                    lambda p=payload: self._send_media(chat_id, p),
+                    max_attempts=self.settings.telegram_max_retries,
+                    base_delay=self.settings.telegram_retry_base_delay,
+                    operation_name="send_attachment",
+                )
+            )
+        return message_ids
 
     # ------------------------------------------------------------------
     # Reactions

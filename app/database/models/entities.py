@@ -209,6 +209,21 @@ class Order(Base, IntPK, TimestampMixin):
     acknowledgement_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     acknowledgement_error: Mapped[str | None] = mapped_column(Text)
 
+    #: Store order number parsed out of the source message's last line.
+    source_order_number: Mapped[str | None] = mapped_column(String(32), index=True)
+
+    #: Set when an operator marks the order as being worked on.
+    in_progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    in_progress_by_user_id: Mapped[int | None] = mapped_column(BigInteger)
+
+    #: Last lifecycle reaction actually applied to the SOURCE message, so a
+    #: repeated event never re-reacts and a restart resumes correctly.
+    source_reaction_stage: Mapped[str | None] = mapped_column(String(32))
+    source_reaction_value: Mapped[str | None] = mapped_column(String(64))
+
+    attachments: Mapped[list["OrderAttachment"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan", lazy="selectin"
+    )
     source_messages: Mapped[list["OrderSourceMessage"]] = relationship(
         back_populates="order", cascade="all, delete-orphan", lazy="selectin"
     )
@@ -532,6 +547,111 @@ class ProcessedUpdate(Base, IntPK):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+
+
+class OrderAttachment(Base, IntPK, TimestampMixin):
+    """Media an operator attached while working the order.
+
+    Only Telegram's ``file_id`` is kept -- a short reference string, never the
+    file itself -- so the result destination can be sent the operator's photos
+    without the database growing with binary data.
+    """
+
+    __tablename__ = "order_attachments"
+    __table_args__ = (UniqueConstraint("chat_id", "message_id"),)
+
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    file_id: Mapped[str] = mapped_column(Text, nullable=False)
+    caption: Mapped[str | None] = mapped_column(Text)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    order: Mapped["Order"] = relationship(back_populates="attachments")
+
+
+class SourceReactionConfig(Base, IntPK, TimestampMixin):
+    """Which reaction the bot puts on the SOURCE message at each stage."""
+
+    __tablename__ = "source_reaction_configs"
+
+    stage: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reaction_value: Mapped[str | None] = mapped_column(String(64))
+
+
+class ProgressReaction(Base, IntPK, TimestampMixin):
+    """Operator reactions in the work group that mean "I am working on this"."""
+
+    __tablename__ = "progress_reactions"
+    __table_args__ = (UniqueConstraint("emoji"),)
+
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class ResultConfig(Base, IntPK, TimestampMixin):
+    """Per-status behaviour when a finalised order is published."""
+
+    __tablename__ = "result_configs"
+
+    status: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+
+    #: Text appended to the order in the result destination.
+    append_text_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    append_text: Mapped[str | None] = mapped_column(Text)
+
+    #: WooCommerce order-status update.
+    woo_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    woo_status: Mapped[str | None] = mapped_column(String(64))
+    woo_note_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    woo_note: Mapped[str | None] = mapped_column(Text)
+
+
+class WooCommerceCall(Base, IntPK, TimestampMixin):
+    """Outbox row for the WooCommerce update: exactly one per order."""
+
+    __tablename__ = "woocommerce_calls"
+    __table_args__ = (UniqueConstraint("order_id"),)
+
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    order_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    store_order_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_status: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(
+        String(32), default=DispatchStatus.PENDING, nullable=False, index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RejectedMessage(Base, IntPK):
+    """A source post refused because its order number was missing or wrong.
+
+    The text is kept even though the original message is deleted, so an admin
+    can still see what was sent.
+    """
+
+    __tablename__ = "rejected_messages"
+    __table_args__ = (UniqueConstraint("chat_id", "message_id"),)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    author_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    author_name: Mapped[str | None] = mapped_column(String(256))
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class NotificationThrottle(Base, IntPK):

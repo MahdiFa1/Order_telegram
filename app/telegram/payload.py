@@ -60,9 +60,29 @@ def _dump_entities(entities: list | None) -> list[dict[str, Any]] | None:
     return dumped
 
 
+def _author(message: Message) -> dict[str, Any]:
+    """Who posted, for addressing a rejection reply.
+
+    A channel post has no ``from_user``; the channel's own title is the only
+    name available there.
+    """
+    user = message.from_user
+    if user is not None:
+        return {
+            "author_user_id": user.id,
+            "author_name": user.full_name or user.username or str(user.id),
+        }
+    author_signature = getattr(message, "author_signature", None)
+    return {
+        "author_user_id": None,
+        "author_name": author_signature or message.chat.title or None,
+    }
+
+
 def extract_payload(message: Message) -> MessagePayload:
     """Map an aiogram ``Message`` onto the columns we persist."""
     common = {
+        "extra": _author(message),
         "chat_id": message.chat.id,
         "message_id": message.message_id,
         "media_group_id": message.media_group_id,

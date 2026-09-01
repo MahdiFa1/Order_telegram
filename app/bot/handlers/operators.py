@@ -7,7 +7,11 @@ from aiogram.types import Message, MessageReactionUpdated
 
 from app.bot.filters import IsWorkGroup
 from app.database.engine import session_scope
-from app.database.repositories import OrderRepository
+from app.database.repositories import (
+    OperatorRepository,
+    OrderRepository,
+    SourceReactionRepository,
+)
 from app.rules.extractor import (
     extract_from_reaction,
     extract_from_reply,
@@ -38,7 +42,15 @@ async def handle_work_group_reply(message: Message, services: Services) -> None:
             return
         order_id = order.id
         payload = extract_payload(message)
+        authorised = await OperatorRepository(session).is_authorized_in_chat(
+            message.from_user.id, message.chat.id
+        )
         signals = await extract_from_reply(session, payload, message.from_user.id)
+
+    # Keep the operator's media even when it carries no signal on its own:
+    # the result destination should show everything they attached.
+    if authorised:
+        await services.signals.record_attachment(order_id, payload)
 
     if not signals:
         return
@@ -66,6 +78,14 @@ async def handle_message_reaction(
         if order is None:
             return
         order_id = order.id
+        # "I am working on this" is a separate marker from success/failure.
+        progress_emojis = await SourceReactionRepository(session).enabled_progress_emojis()
+        marks_progress = bool(progress_emojis & set(new_emojis)) and (
+            actor is not None
+            and await OperatorRepository(session).is_authorized_in_chat(
+                actor, event.chat.id
+            )
+        )
         signals = await extract_from_reaction(
             session,
             chat_id=event.chat.id,
@@ -77,6 +97,9 @@ async def handle_message_reaction(
         withdrawn = (
             await removed_reaction_signals(session, removed=removed) if removed else []
         )
+
+    if marks_progress and services.source_reactions is not None:
+        await services.source_reactions.mark_in_progress(order_id, actor)
 
     if signals:
         await services.signals.apply(order_id, signals)

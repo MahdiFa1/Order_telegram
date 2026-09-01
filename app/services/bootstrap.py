@@ -14,11 +14,13 @@ from app.database.engine import session_scope
 from app.database.repositories import (
     AcknowledgementRepository,
     AdminRepository,
+    ResultConfigRepository,
     RuleRepository,
     SettingRepository,
+    SourceReactionRepository,
 )
 from app.database.repositories.settings import DEFAULTS
-from app.utils.enums import RESULT_STATUSES
+from app.utils.enums import RESULT_STATUSES, SourceReactionStage
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,9 +40,15 @@ async def bootstrap(session_factory: async_sessionmaker, settings: Settings) -> 
 
         rules = RuleRepository(session)
         acks = AcknowledgementRepository(session)
+        results = ResultConfigRepository(session)
         for status in RESULT_STATUSES:
             await rules.get_rule(status)
             await acks.get_config(status)
+            await results.get(status)
+
+        source_reactions = SourceReactionRepository(session)
+        for stage in SourceReactionStage:
+            await source_reactions.get_config(stage)
 
     logger.info(
         "bootstrap_completed", super_admins=len(settings.superadmin_ids)

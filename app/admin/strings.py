@@ -45,6 +45,8 @@ MENU_ITEMS: list[tuple[str, str]] = [
     ("❌ قوانین ناموفق", "rules_failed"),
     ("👍 واکنش تأیید", "reactions"),
     ("📦 مقصد نتایج", "destinations"),
+    ("🔁 واکنش کانال مبدأ", "source_reactions"),
+    ("🧾 محتوای نتیجه", "result_content"),
     ("📈 گزارش‌ها", "reports"),
     ("🔎 جستجوی سفارش", "find_order"),
     ("⚙️ تنظیمات", "settings"),
@@ -58,9 +60,11 @@ MAIN_TEXT = (
     "یک بخش را انتخاب کنید:"
 )
 
+#: Deliberately English: this is the only message a stranger ever sees, and
+#: it must be readable by whoever stumbles onto the bot.
 ACCESS_DENIED = (
-    "⛔️ شما اجازه‌ی دسترسی به پنل مدیریت را ندارید.\n"
-    "از یک مدیر ارشد بخواهید شناسه‌ی عددی شما را اضافه کند."
+    "⛔️ You are not authorised to use this bot's admin panel.\n"
+    "Ask a Super Admin to add your Telegram user ID."
 )
 
 CMD_ID = (
@@ -367,6 +371,166 @@ TEST_REACTION_NO_EMOJI = "❌ هنوز واکنشی تعیین نشده."
 TEST_REACTION_RESULT = "{icon} نتیجه‌ی آزمایش: {detail}"
 
 # ---------------------------------------------------------------------------
+# Source-message reactions
+# ---------------------------------------------------------------------------
+MENU_SOURCE_REACTIONS = "🔁 واکنش کانال مبدأ"
+
+SOURCE_STAGE_NAMES = {
+    "RECEIVED": "دریافت شد",
+    "IN_PROGRESS": "در حال انجام",
+    "SUCCESS": "موفق",
+    "FAILED": "ناموفق",
+}
+SOURCE_STAGE_HELP = {
+    "RECEIVED": "به‌محض اینکه سفارش با موفقیت به گروه کاری رسید.",
+    "IN_PROGRESS": "وقتی اپراتور با یکی از ایموجی‌های «در حال انجام» روی سفارش واکنش بگذارد.",
+    "SUCCESS": "وقتی سفارش موفق شد.",
+    "FAILED": "وقتی سفارش ناموفق شد.",
+}
+
+SOURCE_REACTIONS_INTRO = (
+    "🔁 <b>واکنش کانال مبدأ</b>\n\n"
+    "کسی که سفارش را در کانال مبدأ گذاشته، گروه کاری را نمی‌بیند. این واکنش‌ها "
+    "روی همان پیام اولیه گذاشته می‌شوند تا وضعیت را ببیند:\n\n"
+    "دریافت شد ← در حال انجام ← موفق / ناموفق\n\n"
+    "<i>تلگرام به ربات فقط یک واکنش روی هر پیام می‌دهد، پس هر مرحله جای مرحله‌ی "
+    "قبل را می‌گیرد.</i>"
+)
+SOURCE_STAGE_SCREEN = (
+    "🔁 <b>مرحله: {stage}</b>\n\n"
+    "<i>{help}</i>\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "واکنش:\n{reaction}"
+)
+BTN_PROGRESS_REACTIONS = "👋 ایموجی‌های «در حال انجام»"
+PROGRESS_REACTIONS_TITLE = "👋 <b>ایموجی‌های «در حال انجام»</b>"
+PROGRESS_REACTIONS_INTRO = (
+    "اگر یک <b>اپراتور مجاز</b> با یکی از این ایموجی‌ها روی پیام سفارش در گروه "
+    "کاری واکنش بگذارد، سفارش «در حال انجام» علامت می‌خورد و واکنش کانال مبدأ "
+    "به مرحله‌ی مربوطه تغییر می‌کند."
+)
+PROGRESS_REACTIONS_EMPTY = "هنوز ایموجی‌ای تعریف نشده."
+SET_SOURCE_REACTION_PROMPT = (
+    "ایموجی این مرحله را بفرستید (مثلاً 👀، ⏳، 💯 یا 👎).\n\n"
+    "ربات باید در کانال مبدأ ادمین باشد تا بتواند واکنش بگذارد."
+)
+SOURCE_REACTION_SAVED = "✅ واکنش مرحله‌ی «{stage}» روی {emoji} تنظیم شد"
+SOURCE_NEEDS_REACTION_FIRST = "اول یک ایموجی تعیین کنید."
+
+# ---------------------------------------------------------------------------
+# Result content, appended text and the store
+# ---------------------------------------------------------------------------
+MENU_RESULT_CONTENT = "🧾 محتوای نتیجه"
+RESULT_CONTENT_INTRO = (
+    "🧾 <b>محتوای نتیجه</b>\n\n"
+    "تنظیم اینکه در «مقصد نتایج» چه چیزی فرستاده شود، چه متنی به آخرش اضافه "
+    "شود، و آیا وضعیت سفارش در فروشگاه ووکامرس هم به‌روز شود یا نه."
+)
+RESULT_CONTENT_MODE_NAMES = {
+    "ORDER_AND_ATTACHMENTS": "سفارش + پیوست‌های اپراتور",
+    "ATTACHMENTS_ONLY": "فقط پیوست‌های اپراتور",
+}
+BTN_RESULT_MODE = "ارسال: {value}"
+RESULT_MODE_PROMPT = (
+    "🧾 <b>چه چیزی به مقصد نتایج برود؟</b>\n\n"
+    "<b>سفارش + پیوست‌های اپراتور</b> — اول خود سفارش و بعد عکس‌هایی که اپراتور "
+    "فرستاده.\n\n"
+    "<b>فقط پیوست‌های اپراتور</b> — فقط عکس‌های اپراتور. اگر اپراتور چیزی نفرستاده "
+    "باشد، خود سفارش فرستاده می‌شود تا مقصد خالی نماند."
+)
+BTN_APPEND_TEXT = "📝 متن پایانی"
+APPEND_TEXT_SCREEN = (
+    "📝 <b>متن پایانی سفارش {status}</b>\n\n"
+    "این متن به انتهای سفارش در مقصد نتایج اضافه می‌شود.\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "متن:\n{text}"
+)
+APPEND_TEXT_PROMPT = (
+    "متنی که باید به انتهای سفارش اضافه شود را بفرستید.\n\n"
+    "نمونه: <code>✅سفارش با موفقیت انجام شد</code>"
+)
+APPEND_TEXT_SAVED = "✅ متن پایانی ذخیره شد."
+APPEND_NEEDS_TEXT_FIRST = "اول یک متن تعیین کنید."
+
+BTN_WOO = "🛒 ووکامرس"
+WOO_SCREEN = (
+    "🛒 <b>ووکامرس — سفارش {status}</b>\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "وضعیت جدید سفارش در فروشگاه:\n{woo_status}\n\n"
+    "یادداشت:\n{note_enabled}\n{note}"
+)
+WOO_STORE_SCREEN = (
+    "🛒 <b>اتصال فروشگاه</b>\n\n"
+    "آدرس:\n{base_url}\n\n"
+    "کلید مصرف‌کننده:\n{key}\n\n"
+    "رمز مصرف‌کننده:\n{secret}\n\n"
+    "<i>کلیدها را از پیشخوان ووکامرس بسازید: WooCommerce ← Settings ← "
+    "Advanced ← REST API، با دسترسی خواندن/نوشتن.</i>"
+)
+BTN_WOO_STORE = "🔗 اتصال فروشگاه"
+BTN_WOO_STATUS = "🏷 وضعیت جدید"
+BTN_WOO_NOTE = "🗒 یادداشت"
+BTN_WOO_TEST = "🧪 آزمایش اتصال"
+BTN_WOO_URL = "آدرس فروشگاه"
+BTN_WOO_KEY = "کلید مصرف‌کننده"
+BTN_WOO_SECRET = "رمز مصرف‌کننده"
+WOO_URL_PROMPT = (
+    "آدرس فروشگاه را بفرستید، مثلاً:\n<code>https://example.com</code>\n\n"
+    "بدون <code>/wp-json</code> — خودش اضافه می‌شود."
+)
+WOO_KEY_PROMPT = "کلید مصرف‌کننده (Consumer key) را بفرستید. با <code>ck_</code> شروع می‌شود."
+WOO_SECRET_PROMPT = "رمز مصرف‌کننده (Consumer secret) را بفرستید. با <code>cs_</code> شروع می‌شود."
+WOO_STATUS_PROMPT = (
+    "وضعیتی که سفارش در فروشگاه باید بگیرد را بفرستید.\n\n"
+    "نمونه‌های رایج: <code>completed</code>، <code>processing</code>، "
+    "<code>cancelled</code>، <code>refunded</code>، <code>failed</code>"
+)
+WOO_NOTE_PROMPT = (
+    "متن یادداشتی که در فروشگاه ثبت شود را بفرستید.\n\n"
+    "جایگزین‌ها: <code>{order}</code> شماره‌ی روزانه، <code>{number}</code> "
+    "شماره‌ی فروشگاه، <code>{status}</code> وضعیت."
+)
+WOO_SAVED = "✅ ذخیره شد."
+WOO_NOT_CONFIGURED = "— تنظیم نشده —"
+WOO_SECRET_MASK = "••••••••"
+WOO_TEST_RESULT = "{icon} نتیجه‌ی آزمایش اتصال: {detail}"
+WOO_NEEDS_ORDER_NUMBER = (
+    "برای فعال کردن ووکامرس، اول باید «شماره سفارش فروشگاه» در ⚙️ تنظیمات فعال "
+    "باشد — بدون آن ربات نمی‌داند کدام سفارش فروشگاه را به‌روز کند."
+)
+WOO_NEEDS_STORE = "اول آدرس و کلیدهای فروشگاه را در «🔗 اتصال فروشگاه» تنظیم کنید."
+
+# ---------------------------------------------------------------------------
+# Store order number (parsed from the source message)
+# ---------------------------------------------------------------------------
+BTN_ORDER_NUMBER = "🔢 شماره سفارش فروشگاه"
+ORDER_NUMBER_SCREEN = (
+    "🔢 <b>شماره سفارش فروشگاه</b>\n\n"
+    "ربات <b>خط آخر</b> هر سفارش را می‌خواند و شماره‌ی سفارش فروشگاه را از آن "
+    "برمی‌دارد.\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "تعداد ارقام:\n{length}\n\n"
+    "حذف پیام نامعتبر:\n{delete}\n\n"
+    "پیام خطا:\n{message}\n\n"
+    "<i>ارقام فارسی و عربی هم شناخته می‌شوند. اگر خط آخر شماره‌ی درست نداشته "
+    "باشد، سفارش ساخته نمی‌شود و به گروه کاری نمی‌رود.</i>"
+)
+BTN_ORDER_NUMBER_LENGTH = "تعداد ارقام: {value}"
+BTN_ORDER_NUMBER_DELETE = "حذف پیام نامعتبر: {value}"
+BTN_ORDER_NUMBER_MESSAGE = "✏️ پیام خطا"
+ORDER_NUMBER_LENGTH_PROMPT = (
+    "تعداد ارقام شماره سفارش را بفرستید (بین {min} و {max}).\n\n"
+    "الان {current} رقم است."
+)
+ORDER_NUMBER_LENGTH_INVALID = "❌ یک عدد بین {min} و {max} بفرستید."
+ORDER_NUMBER_MESSAGE_PROMPT = (
+    "پیامی که وقتی شماره سفارش غلط یا غایب است ریپلای شود را بفرستید.\n\n"
+    "<code>{name}</code> با نام فرستنده جایگزین می‌شود.\n\n"
+    "نمونه: <code>{name} عزیز، شماره سفارش قرار نگرفته یا اشتباه است.</code>"
+)
+ORDER_NUMBER_SAVED = "✅ ذخیره شد."
+
+# ---------------------------------------------------------------------------
 # Reports
 # ---------------------------------------------------------------------------
 REPORTS_INTRO = (
@@ -669,6 +833,12 @@ NOTIFY_CONFLICT = (
     "قوانین موفق و ناموفق هم‌زمان برقرار شدند.\n"
     "سفارش در وضعیت «تداخل» متوقف است: چیزی ارسال نشد و واکنشی گذاشته نشد.\n\n"
     "از مسیر 🔎 جستجوی سفارش آن را حل کنید."
+)
+NOTIFY_STORE_FAILED = (
+    "⚠️ سفارش {number}\n\n"
+    "به‌روزرسانی وضعیت در فروشگاه ناموفق بود.\n\n"
+    "شماره سفارش فروشگاه:\n{order_number}\n\n"
+    "دلیل:\n{reason}"
 )
 NOTIFY_ROUTE_FAILED = (
     "⚠️ سفارش {number}\n\nارسال به گروه کاری ناموفق بود.\n\nدلیل:\n{reason}"

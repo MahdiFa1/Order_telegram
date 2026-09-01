@@ -170,6 +170,17 @@ class AdminNotifier:
                     "startup_notify_failed", admin=user_id, error=str(error)
                 )
 
+    async def store_update_failed(
+        self, order_id: int, order_number: str, reason: str
+    ) -> None:
+        number = await self._display_number(order_id)
+        await self._send(
+            "store_update_failed",
+            t.NOTIFY_STORE_FAILED.format(
+                number=number, order_number=order_number, reason=reason
+            ),
+        )
+
     async def route_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(

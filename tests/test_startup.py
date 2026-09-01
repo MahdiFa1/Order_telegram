@@ -566,11 +566,18 @@ async def test_every_user_facing_string_is_persian():
     allowed = {
         "SUPERADMIN", "IDS", "ORD", "order", "YYYY", "MM", "DD",
         "start", "id", "chat", "message", "done", "lt", "gt",
+        # WooCommerce's own dashboard path and field names, which the admin
+        # has to follow verbatim in an English admin UI, plus a URL example.
+        "WooCommerce", "Settings", "Advanced", "REST", "API",
+        "Consumer", "key", "secret", "https", "com", "json", "ck", "cs",
+        # WooCommerce order status slugs shown as examples.
+        "completed", "processing", "cancelled", "refunded", "failed",
     }
 
     offenders: list[tuple[str, str]] = []
     for name, value in vars(strings).items():
-        if name.startswith("_") or name == "BOT_COMMANDS":
+        # ACCESS_DENIED is deliberately English: see its comment.
+        if name.startswith("_") or name in {"BOT_COMMANDS", "ACCESS_DENIED"}:
             continue
         candidates = [value] if isinstance(value, str) else []
         if isinstance(value, dict):

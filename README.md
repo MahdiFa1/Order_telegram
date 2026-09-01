@@ -153,7 +153,9 @@ docker/entrypoint.sh          # wait for DB → migrate → exec app
 `order_delivery_messages`, `status_rules`, `rule_signals`, `rule_text_patterns`,
 `rule_reactions`, `order_signals`, `result_destinations`, `result_dispatches`,
 `acknowledgement_configs`, `acknowledgement_events`, `status_events`, `settings`,
-`audit_logs`, `processed_updates`, `notification_throttle`.
+`audit_logs`, `processed_updates`, `notification_throttle`, `order_attachments`,
+`source_reaction_configs`, `progress_reactions`, `result_configs`,
+`woocommerce_calls`, `rejected_messages`.
 
 ---
 
@@ -165,6 +167,20 @@ docker/entrypoint.sh          # wait for DB → migrate → exec app
 - An album (shared `media_group_id`) is **one** order; every message id is mapped.
 - Duplicate Telegram updates never create a second order.
 - `edited_channel_post` never creates a new order.
+
+### Store order number
+- Read from the **last line** of the source post, before the order is created.
+- Required digit count is configurable (default `7`, changeable to `8` or any
+  value between 3 and 20).
+- Persian (`۱۲۳۴۵۶۷`) and Arabic-Indic (`١٢٣٤٥٦٧`) digits are normalised first.
+- When the feature is on and the last line carries no number of the required
+  length, the post never becomes an order: the bot replies with a configurable
+  message (`{name}` is substituted with the author's name), optionally deletes
+  the post, and nothing reaches the work group.
+- A refused post is kept in `rejected_messages` — including its text — so an
+  admin can still see what was sent after the post itself was deleted.
+- The number is read **once**, at intake, and stored on the order, so nothing an
+  operator later types in the work group (`420x2✅` and the like) can change it.
 
 ### Numbering
 - `order1`, `order2`, … reset daily on the `Asia/Tehran` business date.
@@ -192,6 +208,49 @@ docker/entrypoint.sh          # wait for DB → migrate → exec app
 - Separate destinations per status; several per status supported.
 - Each destination can be marked *required* and one is *primary*.
 - Per-destination state (`SENT` / `FAILED`) recorded individually.
+- **Operator attachments are forwarded.** Photos, videos, documents, audio,
+  voice notes and animations the operator replied with are sent on to the result
+  destination for both SUCCESS and FAILED. Several media are sent as an album.
+- Only the Telegram `file_id` (a ~70-character reference) is stored — never the
+  file itself — so the database stays small.
+- Result content mode, set from the panel: `ORDER_ONLY` (the copied order),
+  `ORDER_AND_ATTACHMENTS` (both) or `ATTACHMENTS_ONLY`. The last mode falls back
+  to sending the order when the operator attached nothing.
+- Optional appended text per status, editable from the panel — for example
+  `✅سفارش با موفقیت انجام شد` for SUCCESS and `❌اطلاعات اشتباه بود.` for FAILED.
+
+### Source-channel reactions
+The person who posted in the source channel never sees the work group, so the
+bot reports progress back on the **original source message**:
+
+| Stage | When it is applied |
+| --- | --- |
+| `RECEIVED` | the order reached the work group |
+| `IN_PROGRESS` | an operator put one of the configured "in progress" reactions (e.g. 👍) on the bot's work-group message |
+| `SUCCESS` | the order was finalised as SUCCESS (e.g. 💯) |
+| `FAILED` | the order was finalised as FAILED (e.g. 👎) |
+
+- Each stage has its own emoji and its own on/off switch.
+- Telegram allows a bot one reaction per message, so each stage *replaces* the
+  previous one; the applied stage is stored on the order, which makes a repeated
+  event or a restart a no-op rather than a re-reaction.
+- A late `RECEIVED` can never undo a `SUCCESS` already showing.
+- Any number of "in progress" emojis can be configured.
+- A failed reaction is logged and audited but never changes the order's status.
+
+### WooCommerce
+- On SUCCESS or FAILED the bot can set the store order's status over the
+  WooCommerce REST API (`/wp-json/wc/v3/`, consumer key/secret over Basic auth).
+- The target status per result (`completed`, `cancelled`, …) and an optional
+  order note are configured from the panel; the note supports `{order}`,
+  `{number}` and `{status}`.
+- The store order is found by its number, with a fallback to the numeric id.
+- Runs through the same outbox and claim-before-send pattern as result dispatch,
+  so the store is updated **exactly once** per order even across a restart.
+- Skipped silently when disabled, when the order carries no store number, or when
+  the order ends as `CONFLICT`.
+- A store failure is recorded and retried; it never changes the Telegram result.
+- The consumer secret is masked in the panel and never written to the audit log.
 
 ### Acknowledgement reactions
 - Configured independently for SUCCESS and FAILED (emoji, target, policy, retry).
@@ -390,17 +449,23 @@ PostgreSQL and is edited from the admin panel. Nothing is hard coded.
 
 ## Configuring the bot
 
-Send `/start` as a super admin. The panel offers:
+Send `/start` as a super admin. The panel is in Persian and offers:
 
 ```
-📊 Dashboard          📥 Source Channels
-👥 Work Groups        🔀 Routing
-👤 Operators          ✅ Success Rules
-❌ Failure Rules      👍 Result Reactions
-📦 Result Destinations 📈 Reports
-🔎 Find Order         ⚙️ Settings
-🩺 System Status      📝 Audit Logs
+📊 داشبورد               📥 کانال‌های مبدأ
+👥 گروه‌های کاری          🔀 مسیردهی
+👤 اپراتورها             ✅ قوانین موفق
+❌ قوانین ناموفق         👍 واکنش تأیید
+📦 مقصد نتایج            🔁 واکنش کانال مبدأ
+🧾 محتوای نتیجه          📈 گزارش‌ها
+🔎 جستجوی سفارش          ⚙️ تنظیمات
+🩺 وضعیت سیستم           📝 رویدادها
 ```
+
+`🔁 واکنش کانال مبدأ` configures the source-message reaction stages and the
+"in progress" emojis; `🧾 محتوای نتیجه` configures the appended result text, the
+result content mode and the WooCommerce connection. The store order number lives
+under `⚙️ تنظیمات`.
 
 ### Recommended order
 
@@ -414,8 +479,15 @@ Send `/start` as a super admin. The panel offers:
    *required* and pick a *primary*.
 6. **✅ Success Rules / ❌ Failure Rules** — enable the signals, set `ANY` or `ALL`,
    add text patterns and accepted detection reactions.
-7. **👍 Result Reactions** — enable the acknowledgement per status, choose the
+7. **👍 واکنش تأیید** — enable the acknowledgement per status, choose the
    emoji, target mode and dispatch policy, and use **Test Reaction**.
+8. **🔁 واکنش کانال مبدأ** — optional: pick the emoji for each stage
+   (received / in progress / success / failed) and the "in progress" emojis
+   operators use in the work group.
+9. **🧾 محتوای نتیجه** — optional: the text appended per status, whether
+   operator attachments are forwarded, and the WooCommerce connection.
+10. **⚙️ تنظیمات** — optional: turn the store order number on, set its digit
+    count, the rejection message and whether the refused post is deleted.
 
 ### Worked example
 

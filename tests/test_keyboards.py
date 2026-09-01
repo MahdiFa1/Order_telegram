@@ -21,12 +21,17 @@ from app.bot.keyboards.callbacks import (
     OperatorCB,
     OrderCB,
     ReportCB,
+    ResultCB,
     RouteCB,
     RuleCB,
     SettingCB,
+    SourceCB,
 )
 from app.database.models import (
     AcknowledgementConfig,
+    ProgressReaction,
+    ResultConfig,
+    SourceReactionConfig,
     Admin,
     Operator,
     Order,
@@ -41,6 +46,7 @@ from app.database.models import (
 )
 from app.utils.enums import (
     AcknowledgementTargetMode,
+    SourceReactionStage,
     AdminRole,
     DispatchPolicy,
     MatchMode,
@@ -54,7 +60,7 @@ pytestmark = pytest.mark.asyncio
 
 CALLBACK_CLASSES = [
     Nav, ChatCB, RouteCB, OperatorCB, RuleCB, AckCB, ReportCB, OrderCB, SettingCB,
-    AdminCB, AuditCB,
+    AdminCB, AuditCB, SourceCB, ResultCB,
 ]
 
 TELEGRAM_CALLBACK_LIMIT = 64
@@ -137,6 +143,19 @@ def an_ack_config() -> AcknowledgementConfig:
     )
 
 
+def a_result_config() -> ResultConfig:
+    return ResultConfig(
+        id=9,
+        status=OrderStatus.SUCCESS,
+        append_text_enabled=True,
+        append_text="✅ انجام شد",
+        woo_enabled=True,
+        woo_status="completed",
+        woo_note_enabled=True,
+        woo_note="note",
+    )
+
+
 def an_order() -> Order:
     return Order(id=8, status=OrderStatus.PENDING, display_number="order8")
 
@@ -156,6 +175,8 @@ REQUIRED_SECTIONS = (
     "settings",
     "system_status",
     "audit",
+    "source_reactions",
+    "result_content",
 )
 
 
@@ -239,6 +260,25 @@ async def test_main_menu_is_labelled_in_persian():
         ),
         lambda: kb.audit_keyboard(0, True),
         lambda: kb.audit_keyboard(20, False),
+        lambda: kb.source_reactions_menu(
+            [
+                SourceReactionConfig(id=i, stage=stage.value, enabled=bool(i % 2), reaction_value="👀")
+                for i, stage in enumerate(SourceReactionStage, start=1)
+            ]
+        ),
+        lambda: kb.source_stage_detail(
+            SourceReactionConfig(
+                id=1, stage=SourceReactionStage.RECEIVED, enabled=True, reaction_value="👀"
+            )
+        ),
+        lambda: kb.progress_reaction_list([ProgressReaction(id=1, emoji="👍", enabled=True)]),
+        lambda: kb.result_content_menu("ORDER_AND_ATTACHMENTS"),
+        lambda: kb.result_mode_picker(),
+        lambda: kb.append_text_detail(OrderStatus.SUCCESS, a_result_config()),
+        lambda: kb.woo_detail(OrderStatus.FAILED, a_result_config()),
+        lambda: kb.woo_store_detail(),
+        lambda: kb.order_number_detail(True, True, 7),
+        lambda: kb.order_number_detail(False, False, 12),
     ],
 )
 async def test_every_keyboard_builds_and_round_trips(markup_factory):

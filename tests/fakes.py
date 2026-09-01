@@ -49,6 +49,9 @@ class FakeGateway:
         self.failing_reaction_chats: set[int] = set()
         self.fail_all_reactions = False
         self.reaction_attempts = 0
+        self.replies: list[tuple[int, int, str]] = []
+        self.deleted: list[tuple[int, int]] = []
+        self.failing_delete_chats: set[int] = set()
 
     # -- sending ------------------------------------------------------
     def _allocate(self) -> int:
@@ -87,6 +90,44 @@ class FakeGateway:
                 )
                 message_ids.append(message_id)
         return message_ids
+
+    async def send_attachments(self, chat_id: int, attachments, caption=None) -> list[int]:
+        if chat_id in self.failing_chats:
+            raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
+        message_ids: list[int] = []
+        for index, attachment in enumerate(attachments):
+            message_id = self._allocate()
+            self.sent.append(
+                SentMessage(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    kind="attachment",
+                    caption=caption if index == 0 else attachment.caption,
+                    payload={
+                        "file_id": attachment.file_id,
+                        "media": attachment.file_id,
+                        "content_type": attachment.content_type,
+                    },
+                )
+            )
+            message_ids.append(message_id)
+        return message_ids
+
+    async def send_reply(self, chat_id: int, reply_to_message_id: int, text: str) -> int:
+        if chat_id in self.failing_chats:
+            raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
+        message_id = self._allocate()
+        self.replies.append((chat_id, reply_to_message_id, text))
+        self.sent.append(
+            SentMessage(chat_id=chat_id, message_id=message_id, kind="reply", text=text)
+        )
+        return message_id
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        if chat_id in self.failing_delete_chats:
+            return False
+        self.deleted.append((chat_id, message_id))
+        return True
 
     async def send_text(self, chat_id: int, text: str) -> int:
         if chat_id in self.failing_chats:
@@ -135,6 +176,14 @@ class FakeGateway:
     def messages_in(self, chat_id: int) -> list[SentMessage]:
         return [m for m in self.sent if m.chat_id == chat_id]
 
+    def orders_in(self, chat_id: int) -> list[SentMessage]:
+        """Only the copied order itself, without the operator's attachments.
+
+        Attachments are separate messages, so a test that asks "was the order
+        dispatched exactly once?" must not count them.
+        """
+        return [m for m in self.messages_in(chat_id) if m.kind != "attachment"]
+
     def reactions_on(self, chat_id: int, message_id: int) -> list[AppliedReaction]:
         return [
             r for r in self.reactions if r.chat_id == chat_id and r.message_id == message_id
@@ -144,6 +193,8 @@ class FakeGateway:
         self.sent.clear()
         self.reactions.clear()
         self.texts.clear()
+        self.replies.clear()
+        self.deleted.clear()
         self.reaction_attempts = 0
 
 
@@ -165,5 +216,47 @@ class RecordingNotifier:
     async def route_failed(self, order_id: int, reason: str) -> None:
         self.events.append(("route_failed", (order_id, reason)))
 
+    async def store_update_failed(
+        self, order_id: int, order_number: str, reason: str
+    ) -> None:
+        self.events.append(("store_update_failed", (order_id, order_number, reason)))
+
     def kinds(self) -> list[str]:
         return [kind for kind, _ in self.events]
+
+
+class FakeWooCommerceClient:
+    """Records store calls instead of making them.
+
+    Shared across instances because the service builds a fresh client per
+    call, exactly as production does.
+    """
+
+    calls: list[dict] = []
+    fail_with: str | None = None
+
+    def __init__(self, credentials) -> None:
+        self.credentials = credentials
+
+    async def update_order(self, order_number, *, status=None, note=None) -> int:
+        if type(self).fail_with:
+            from app.integrations.woocommerce import WooCommerceError
+
+            raise WooCommerceError(type(self).fail_with)
+        type(self).calls.append(
+            {
+                "order_number": order_number,
+                "status": status,
+                "note": note,
+                "base_url": self.credentials.base_url,
+            }
+        )
+        return 4242
+
+    async def ping(self) -> str:
+        return type(self).fail_with or "ok"
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.calls = []
+        cls.fail_with = None

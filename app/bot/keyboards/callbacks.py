@@ -73,6 +73,18 @@ class AdminCB(CallbackData, prefix="adm"):
     arg: str = ""
 
 
+class SourceCB(CallbackData, prefix="src"):
+    action: str
+    stage: str = ""
+    id: int = 0
+
+
+class ResultCB(CallbackData, prefix="res"):
+    action: str
+    status: str = ""
+    arg: str = ""
+
+
 class AuditCB(CallbackData, prefix="aud"):
     action: str
     offset: int = 0

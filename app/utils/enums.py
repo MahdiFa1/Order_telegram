@@ -206,6 +206,44 @@ class AuditEvent(StrEnum):
     REACTION_CONFIGURATION_CHANGED = "REACTION_CONFIGURATION_CHANGED"
     CONFIGURATION_CHANGED = "CONFIGURATION_CHANGED"
     RECOVERY_PERFORMED = "RECOVERY_PERFORMED"
+    ORDER_REJECTED = "ORDER_REJECTED"
+    SOURCE_REACTION_APPLIED = "SOURCE_REACTION_APPLIED"
+    SOURCE_REACTION_FAILED = "SOURCE_REACTION_FAILED"
+    ORDER_IN_PROGRESS = "ORDER_IN_PROGRESS"
+    WOOCOMMERCE_UPDATED = "WOOCOMMERCE_UPDATED"
+    WOOCOMMERCE_FAILED = "WOOCOMMERCE_FAILED"
+
+
+class SourceReactionStage(StrEnum):
+    """Points in an order's life at which the SOURCE message is re-reacted.
+
+    Telegram lets a bot hold one reaction per message, so each stage replaces
+    the previous one -- the source message always shows the latest state.
+    """
+
+    RECEIVED = "RECEIVED"
+    IN_PROGRESS = "IN_PROGRESS"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+SOURCE_STAGE_LABELS: dict[SourceReactionStage, str] = {
+    SourceReactionStage.RECEIVED: "دریافت شد",
+    SourceReactionStage.IN_PROGRESS: "در حال انجام",
+    SourceReactionStage.SUCCESS: "موفق",
+    SourceReactionStage.FAILED: "ناموفق",
+}
+
+
+class AttachmentSource(StrEnum):
+    OPERATOR = "OPERATOR"
+
+
+class ResultContentMode(StrEnum):
+    """What the result destination receives."""
+
+    ORDER_AND_ATTACHMENTS = "ORDER_AND_ATTACHMENTS"
+    ATTACHMENTS_ONLY = "ATTACHMENTS_ONLY"
 
 
 class SettingKey(StrEnum):
@@ -213,3 +251,14 @@ class SettingKey(StrEnum):
     ORDER_PREFIX = "order_prefix"
     ORDER_NUMBER_FORMAT = "order_number_format"
     ADMIN_NOTIFICATIONS_ENABLED = "admin_notifications_enabled"
+    # --- order number extracted from the source message ---
+    ORDER_NUMBER_ENABLED = "order_number_enabled"
+    ORDER_NUMBER_LENGTH = "order_number_length"
+    ORDER_NUMBER_REJECT_MESSAGE = "order_number_reject_message"
+    ORDER_NUMBER_DELETE_INVALID = "order_number_delete_invalid"
+    # --- WooCommerce store credentials (one store per deployment) ---
+    WOO_BASE_URL = "woo_base_url"
+    WOO_CONSUMER_KEY = "woo_consumer_key"
+    WOO_CONSUMER_SECRET = "woo_consumer_secret"
+    # --- result content ---
+    RESULT_CONTENT_MODE = "result_content_mode"

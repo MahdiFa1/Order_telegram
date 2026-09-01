@@ -15,16 +15,19 @@ from app.database.repositories import (
     AuditRepository,
     CounterRepository,
     OrderRepository,
+    RejectedMessageRepository,
     SettingRepository,
     SourceChannelRepository,
 )
+from app.orders import intake_gate
+from app.orders.order_number import describe as describe_number
 from app.routing.resolver import resolve as resolve_routing
 from app.database.repositories.orders import scope_key_for
 from app.orders.numbering import render_display_number
 from app.telegram.composer import compose
 from app.telegram.gateway import TelegramGateway
 from app.telegram.payload import MessagePayload
-from app.utils.enums import AuditEvent, DeliveryStatus
+from app.utils.enums import AuditEvent, DeliveryStatus, SettingKey, SourceReactionStage
 from app.utils.logging import get_logger
 from app.utils.time import business_date
 
@@ -42,6 +45,10 @@ class IntakeResult:
     created: bool
     attached: bool
     reason: str = ""
+    #: Set when the post was refused for a missing/malformed order number.
+    rejected: bool = False
+    rejection_text: str | None = None
+    order_number: str | None = None
 
 
 class OrderService:
@@ -50,10 +57,12 @@ class OrderService:
         session_factory: async_sessionmaker,
         gateway: TelegramGateway,
         settings: Settings,
+        source_reactions=None,
     ) -> None:
         self.session_factory = session_factory
         self.gateway = gateway
         self.settings = settings
+        self.source_reactions = source_reactions
         self._album_tasks: dict[tuple[int, str], tuple[asyncio.Task, int]] = {}
         self._album_lock = asyncio.Lock()
 
@@ -96,6 +105,12 @@ class OrderService:
                     )
                     return IntakeResult(album_order.id, False, True, "album part attached")
 
+            # The order number gate runs before a number is ever allocated,
+            # so a refused post consumes nothing from the daily counter.
+            decision = await intake_gate.evaluate(session, payload)
+            if decision.rejected:
+                return await self._reject(session, payload, decision)
+
             settings_repo = SettingRepository(session)
             scope = await settings_repo.counter_scope()
             prefix = await settings_repo.order_prefix()
@@ -117,6 +132,7 @@ class OrderService:
                         source_message_id=payload.message_id,
                         source_media_group_id=payload.media_group_id,
                     )
+                    order.source_order_number = decision.order_number
                     await orders.add_source_message(order.id, **payload.as_columns(position=0))
             except IntegrityError:
                 # Lost a race: another worker created the order (or the album
@@ -136,6 +152,7 @@ class OrderService:
                     "counter_scope_key": scope_key,
                     "media_group_id": payload.media_group_id,
                     "content_type": payload.content_type.value,
+                    "store_order_number": decision.order_number,
                 },
             )
             logger.info(
@@ -145,7 +162,61 @@ class OrderService:
                 chat_id=payload.chat_id,
                 message_id=payload.message_id,
             )
-            return IntakeResult(order.id, True, False, "created")
+            return IntakeResult(
+                order.id, True, False, "created", order_number=decision.order_number
+            )
+
+    async def _reject(self, session, payload, decision) -> IntakeResult:
+        """Refuse a post whose last line carries no usable order number."""
+        settings_repo = SettingRepository(session)
+        template = await settings_repo.get(SettingKey.ORDER_NUMBER_REJECT_MESSAGE) or ""
+        delete_it = await settings_repo.get_bool(
+            SettingKey.ORDER_NUMBER_DELETE_INVALID, default=True
+        )
+        name = intake_gate.author_name(payload)
+        text = intake_gate.render_rejection(template, name)
+        explanation = describe_number(decision.result, decision.length)
+
+        await RejectedMessageRepository(session).record(
+            chat_id=payload.chat_id,
+            message_id=payload.message_id,
+            reason=decision.result.reason.value if decision.result else "UNKNOWN",
+            # Kept deliberately: the post itself is about to be deleted.
+            content=intake_gate.payload_text(payload),
+            author_user_id=(payload.extra or {}).get("author_user_id"),
+            author_name=name,
+            deleted=delete_it,
+        )
+        await AuditRepository(session).log(
+            AuditEvent.ORDER_REJECTED,
+            chat_id=payload.chat_id,
+            message_id=payload.message_id,
+            level="WARNING",
+            message=f"Source post refused: {explanation}",
+            data={"author": name, "deleted": delete_it},
+        )
+        logger.info(
+            "order_rejected",
+            chat_id=payload.chat_id,
+            message_id=payload.message_id,
+            reason=explanation,
+        )
+        return IntakeResult(
+            None, False, False, explanation, rejected=True, rejection_text=text
+        )
+
+    async def deliver_rejection(self, payload: MessagePayload, text: str) -> None:
+        """Tell the author, then remove the offending post."""
+        async with session_scope() as session:
+            delete_it = await SettingRepository(session).get_bool(
+                SettingKey.ORDER_NUMBER_DELETE_INVALID, default=True
+            )
+        try:
+            await self.gateway.send_reply(payload.chat_id, payload.message_id, text)
+        except Exception:  # noqa: BLE001 - the delete below still matters
+            logger.exception("rejection_reply_failed", chat_id=payload.chat_id)
+        if delete_it:
+            await self.gateway.delete_message(payload.chat_id, payload.message_id)
 
     async def _attach_after_race(self, payload: MessagePayload) -> IntakeResult:
         async with session_scope() as session:
@@ -326,6 +397,9 @@ class OrderService:
         logger.info(
             "order_routed", order_id=order_id, chat_id=chat_id, message_ids=message_ids
         )
+        # The author only ever sees the source channel: tell them it arrived.
+        if self.source_reactions is not None:
+            await self.source_reactions.apply(order_id, SourceReactionStage.RECEIVED)
         return True
 
     # ------------------------------------------------------------------

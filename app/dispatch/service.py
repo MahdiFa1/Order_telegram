@@ -21,14 +21,18 @@ from app.config import Settings
 from app.database.engine import session_scope
 from app.database.repositories import (
     AcknowledgementRepository,
+    AttachmentRepository,
     AuditRepository,
     OrderRepository,
+    ResultConfigRepository,
     ResultDestinationRepository,
+    SettingRepository,
 )
 from app.telegram.composer import compose
 from app.telegram.gateway import TelegramGateway
 from app.utils.enums import (
     AuditEvent,
+    ResultContentMode,
     DispatchPolicy,
     DispatchStatus,
     OrderDispatchState,
@@ -116,19 +120,48 @@ class DispatchService:
                 order = await orders.get(order_id)
                 if order is None:
                     return
+                order_status = OrderStatus(order.status)
+                display_number = order.display_number
+
+                # Optional trailing line, e.g. "✅ سفارش با موفقیت انجام شد".
+                result_config = await ResultConfigRepository(session).get(order_status)
+                footer = (
+                    result_config.append_text
+                    if result_config.append_text_enabled and result_config.append_text
+                    else None
+                )
+                content_mode = await SettingRepository(session).result_content_mode()
+
                 source_messages = await orders.list_source_messages(order_id)
                 composed = compose(
                     order.display_number,
                     source_messages,
                     source_chat_id=order.source_chat_id,
+                    footer=footer,
                 )
-                display_number = order.display_number
-                order_status = OrderStatus(order.status)
+                # What the operator sent while working the order. Only the
+                # Telegram file ids are stored, never the media itself.
+                attachments = await AttachmentRepository(session).list_for_order(order_id)
 
-            if composed.is_empty:
+            send_order = content_mode is ResultContentMode.ORDER_AND_ATTACHMENTS
+            if send_order and composed.is_empty:
                 raise RuntimeError("no stored source message to send")
+            if not send_order and not attachments:
+                # Attachments-only was asked for but the operator sent none;
+                # fall back to the order so the destination is never empty.
+                send_order = True
 
-            message_ids = await self.gateway.send_composed(chat_id, composed)
+            message_ids: list[int] = []
+            if send_order:
+                message_ids.extend(await self.gateway.send_composed(chat_id, composed))
+            if attachments:
+                message_ids.extend(
+                    await self.gateway.send_attachments(
+                        chat_id,
+                        attachments,
+                        caption=None if send_order else footer,
+                    )
+                )
         except Exception as error:  # noqa: BLE001 - persisted, never fatal
             logger.warning(
                 "result_dispatch_failed",
@@ -163,7 +196,11 @@ class DispatchService:
                 chat_id=chat_id,
                 message_id=message_ids[0] if message_ids else None,
                 message=f"Order {display_number} sent to {order_status.value} destination",
-                data={"dispatch_id": dispatch_id, "message_ids": message_ids},
+                data={
+                    "dispatch_id": dispatch_id,
+                    "message_ids": message_ids,
+                    "attachments": len(attachments),
+                },
             )
         logger.info(
             "result_dispatch_sent",

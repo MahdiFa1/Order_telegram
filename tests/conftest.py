@@ -44,10 +44,12 @@ from app.services.bootstrap import bootstrap  # noqa: E402
 from app.services.container import Services  # noqa: E402
 from app.acknowledgements.service import AcknowledgementService  # noqa: E402
 from app.dispatch.service import DispatchService  # noqa: E402
+from app.dispatch.store import StoreDispatchService  # noqa: E402
 from app.orders.service import OrderService  # noqa: E402
 from app.reports.service import ReportService  # noqa: E402
 from app.services.finalizer import OrderFinalizer  # noqa: E402
 from app.services.signals import SignalService  # noqa: E402
+from app.services.source_reactions import SourceReactionService  # noqa: E402
 from app.utils.enums import (  # noqa: E402
     AcknowledgementTargetMode,
     DispatchPolicy,
@@ -56,7 +58,11 @@ from app.utils.enums import (  # noqa: E402
     RuleMode,
     SignalKey,
 )
-from tests.fakes import FakeGateway, RecordingNotifier  # noqa: E402
+from tests.fakes import (  # noqa: E402
+    FakeGateway,
+    FakeWooCommerceClient,
+    RecordingNotifier,
+)
 
 SOURCE_CHAT_ID = -1001000000001
 WORK_GROUP_CHAT_ID = -1002000000002
@@ -94,6 +100,7 @@ async def session_factory(db_engine):
 
 @pytest.fixture
 def gateway() -> FakeGateway:
+    FakeWooCommerceClient.reset()
     return FakeGateway()
 
 
@@ -105,11 +112,21 @@ def notifier() -> RecordingNotifier:
 @pytest_asyncio.fixture
 async def services(session_factory, gateway, notifier) -> Services:
     settings = get_settings()
-    orders = OrderService(session_factory, gateway, settings)
+    source_reactions = SourceReactionService(session_factory, gateway, settings)
+    orders = OrderService(session_factory, gateway, settings, source_reactions)
     dispatch = DispatchService(session_factory, gateway, settings, notifier)
     acknowledgements = AcknowledgementService(session_factory, gateway, settings, notifier)
+    store = StoreDispatchService(
+        session_factory, settings, notifier, client_factory=FakeWooCommerceClient
+    )
     finalizer = OrderFinalizer(
-        session_factory, dispatch, acknowledgements, settings, notifier
+        session_factory,
+        dispatch,
+        acknowledgements,
+        settings,
+        notifier,
+        store=store,
+        source_reactions=source_reactions,
     )
     container = Services(
         settings=settings,
@@ -123,6 +140,8 @@ async def services(session_factory, gateway, notifier) -> Services:
         signals=SignalService(session_factory, finalizer),
         reports=ReportService(session_factory),
         bot_user_id=42,
+        store=store,
+        source_reactions=source_reactions,
     )
     await bootstrap(session_factory, settings)
     return container

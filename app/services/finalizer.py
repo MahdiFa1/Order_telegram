@@ -64,12 +64,16 @@ class OrderFinalizer:
         acknowledgements: AcknowledgementService,
         settings: Settings,
         notifier=None,
+        store=None,
+        source_reactions=None,
     ) -> None:
         self.session_factory = session_factory
         self.dispatch = dispatch
         self.acknowledgements = acknowledgements
         self.settings = settings
         self.notifier = notifier
+        self.store = store
+        self.source_reactions = source_reactions
 
     # ------------------------------------------------------------------
     async def evaluate_and_finalize(
@@ -218,6 +222,14 @@ class OrderFinalizer:
         await self.dispatch.process(order_id)
         await self.acknowledgements.process(order_id)
 
+        # The store update and the source-channel reaction are independent of
+        # the Telegram result dispatch: neither can undo the order's status.
+        if self.store is not None:
+            if await self.store.prepare(order_id, status):
+                await self.store.process(order_id)
+        if self.source_reactions is not None:
+            await self.source_reactions.apply_for_status(order_id, status)
+
     # ------------------------------------------------------------------
     async def manual_override(
         self,
@@ -289,6 +301,14 @@ class OrderFinalizer:
             await self.dispatch.process(order_id)
             if apply_acknowledgement:
                 await self.acknowledgements.process(order_id)
+            if self.store is not None:
+                if await self.store.prepare(order_id, new_status):
+                    await self.store.process(order_id)
+
+        # The source-channel reaction reports the order's STATUS back to whoever
+        # posted it, so it follows the status even when nothing was dispatched.
+        if new_status.is_terminal and self.source_reactions is not None:
+            await self.source_reactions.apply_for_status(order_id, new_status)
 
         return FinalizationResult(order_id, new_status, True, None, "manual override")
 

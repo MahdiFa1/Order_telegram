@@ -76,6 +76,7 @@ def compose(
     source_messages: Sequence[OrderSourceMessage],
     *,
     source_chat_id: int | None = None,
+    footer: str | None = None,
 ) -> ComposedOrder:
     """Turn the stored source messages into send operations.
 
@@ -99,29 +100,40 @@ def compose(
 
     header = build_header(display_number)
     header_offset = utf16_length(header)
+    suffix = f"\n\n{footer}" if footer else ""
 
     album = [m for m in messages if ContentType(m.content_type) in ALBUM_TYPES]
     if len(messages) > 1 and len(album) == len(messages):
-        return ComposedOrder(operations=[_compose_album(album, header, header_offset)])
+        return ComposedOrder(
+            operations=[_compose_album(album, header, header_offset, suffix)]
+        )
 
     primary = messages[0]
     content_type = ContentType(primary.content_type)
 
     if content_type is ContentType.TEXT:
-        return ComposedOrder(operations=_compose_text(primary, header, header_offset))
+        return ComposedOrder(
+            operations=_compose_text(primary, header, header_offset, suffix)
+        )
 
     if content_type in CAPTIONABLE and primary.file_id:
         return ComposedOrder(
-            operations=_compose_single_media(primary, content_type, header, header_offset)
+            operations=_compose_single_media(
+                primary, content_type, header, header_offset, suffix
+            )
         )
 
-    return ComposedOrder(
-        operations=_compose_fallback(primary, header, source_chat_id or primary.chat_id)
-    )
+    operations = _compose_fallback(primary, header, source_chat_id or primary.chat_id)
+    if footer:
+        operations.append(SendOperation(kind="text", payload={"text": footer}))
+    return ComposedOrder(operations=operations)
 
 
 def _compose_album(
-    album: Sequence[OrderSourceMessage], header: str, header_offset: int
+    album: Sequence[OrderSourceMessage],
+    header: str,
+    header_offset: int,
+    suffix: str = "",
 ) -> SendOperation:
     items: list[dict[str, Any]] = []
     caption_used = False
@@ -133,7 +145,7 @@ def _compose_album(
         if ContentType(message.content_type) in {ContentType.PHOTO, ContentType.VIDEO}:
             item["has_spoiler"] = message.has_spoiler
         if not caption_used:
-            caption = f"{header}{message.caption or ''}"
+            caption = f"{header}{message.caption or ''}{suffix}"
             if len(caption) <= CAPTION_LIMIT:
                 item["caption"] = caption
                 item["caption_entities"] = shift_entities(
@@ -150,10 +162,10 @@ def _compose_album(
 
 
 def _compose_text(
-    message: OrderSourceMessage, header: str, header_offset: int
+    message: OrderSourceMessage, header: str, header_offset: int, suffix: str = ""
 ) -> list[SendOperation]:
     body = message.text or ""
-    combined = f"{header}{body}"
+    combined = f"{header}{body}{suffix}"
     if len(combined) <= TEXT_LIMIT:
         return [
             SendOperation(
@@ -172,6 +184,8 @@ def _compose_text(
             kind="text", payload={"text": body[:TEXT_LIMIT], "entities": message.entities}
         )
     )
+    if suffix:
+        operations.append(SendOperation(kind="text", payload={"text": suffix.strip()}))
     return operations
 
 
@@ -180,8 +194,9 @@ def _compose_single_media(
     content_type: ContentType,
     header: str,
     header_offset: int,
+    suffix: str = "",
 ) -> list[SendOperation]:
-    caption = f"{header}{message.caption or ''}"
+    caption = f"{header}{message.caption or ''}{suffix}"
     payload: dict[str, Any] = {
         "content_type": content_type.value,
         "file_id": message.file_id,
@@ -197,6 +212,10 @@ def _compose_single_media(
             SendOperation(kind="text", payload={"text": header.strip()}),
             SendOperation(kind="media", payload=payload),
         ]
+        if suffix:
+            operations.append(
+                SendOperation(kind="text", payload={"text": suffix.strip()})
+            )
     if content_type in {ContentType.PHOTO, ContentType.VIDEO, ContentType.ANIMATION}:
         payload["has_spoiler"] = message.has_spoiler
     return operations

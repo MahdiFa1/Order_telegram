@@ -5,7 +5,11 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.database.engine import session_scope
-from app.database.repositories import AuditRepository, OrderRepository
+from app.database.repositories import (
+    AttachmentRepository,
+    AuditRepository,
+    OrderRepository,
+)
 from app.rules.engine import ExtractedSignal
 from app.services.finalizer import FinalizationResult, OrderFinalizer, TriggerContext
 from app.utils.enums import AuditEvent, OrderStatus
@@ -18,6 +22,26 @@ class SignalService:
     def __init__(self, session_factory: async_sessionmaker, finalizer: OrderFinalizer) -> None:
         self.session_factory = session_factory
         self.finalizer = finalizer
+
+    async def record_attachment(self, order_id: int, payload) -> bool:
+        """Keep the operator's media so the result destination can show it.
+
+        Only Telegram's ``file_id`` is stored -- a short reference string, not
+        the file -- so this costs the database almost nothing.
+        """
+        from app.utils.enums import ContentType
+
+        if not payload.file_id or ContentType(payload.content_type) is ContentType.TEXT:
+            return False
+        async with session_scope() as session:
+            return await AttachmentRepository(session).add(
+                order_id=order_id,
+                content_type=payload.content_type.value,
+                file_id=payload.file_id,
+                caption=payload.caption,
+                chat_id=payload.chat_id,
+                message_id=payload.message_id,
+            )
 
     async def apply(
         self, order_id: int, signals: list[ExtractedSignal]

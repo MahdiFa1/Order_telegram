@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.database.engine import session_scope
-from app.database.repositories import OrderRepository
+from app.database.repositories import OperatorRepository, OrderRepository
 from app.rules.extractor import extract_from_reaction, extract_from_reply
 from app.telegram.payload import MessagePayload
 from app.utils.enums import ContentType
@@ -63,9 +63,20 @@ async def primary_work_group_message(order_id: int, chat_id: int) -> tuple[int, 
 async def operator_replies(
     services, order_id: int, payload: MessagePayload, operator_id: int
 ):
-    """Simulate an operator reply landing on the order's work-group message."""
+    """Simulate an operator reply landing on the order's work-group message.
+
+    Mirrors ``handle_work_group_reply``: an authorised operator's media is
+    recorded whether or not it carries a rule signal, then the signals are
+    applied.
+    """
     async with session_scope() as session:
+        authorised = await OperatorRepository(session).is_authorized_in_chat(
+            operator_id, payload.chat_id
+        )
         signals = await extract_from_reply(session, payload, operator_id)
+
+    if authorised:
+        await services.signals.record_attachment(order_id, payload)
     return await services.signals.apply(order_id, signals)
 
 

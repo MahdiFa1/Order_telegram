@@ -65,7 +65,7 @@ async def test_success_acknowledgement_lands_on_the_operator_reply(destinations)
     assert order.acknowledgement_status == AcknowledgementStatus.APPLIED
 
     # The order reached the success destination...
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     # ...and only then was the operator's photo acknowledged.
     assert len(services.gateway.reactions) == 1
     reaction = services.gateway.reactions[0]
@@ -102,7 +102,7 @@ async def test_failure_acknowledgement_lands_on_the_operator_reply(destinations)
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.FAILED
-    assert len(services.gateway.messages_in(FAILURE_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(FAILURE_CHAT_ID)) == 1
     assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 0
 
     reaction = services.gateway.reactions[0]
@@ -126,7 +126,7 @@ async def test_success_acknowledgement_can_be_on_while_failure_is_off(destinatio
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.FAILED
-    assert len(services.gateway.messages_in(FAILURE_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(FAILURE_CHAT_ID)) == 1
     assert order.acknowledgement_status == AcknowledgementStatus.NOT_REQUIRED
     assert services.gateway.reactions == []
 
@@ -148,7 +148,7 @@ async def test_reaction_trigger_acknowledges_the_order_message(destinations):
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.SUCCESS
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
 
     # There is no operator message here, so SMART falls back to the order message.
     reaction = services.gateway.reactions[0]
@@ -230,7 +230,7 @@ async def test_retrying_after_the_destination_recovers_completes_the_pipeline(de
     order = await get_order(order_id)
     assert order.result_dispatch_status == OrderDispatchState.SENT
     assert order.acknowledgement_status == AcknowledgementStatus.APPLIED
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
 
 
 async def test_all_required_destinations_policy_waits_for_every_destination(wired):
@@ -294,7 +294,7 @@ async def test_reaction_failure_leaves_the_order_success_and_dispatch_sent(desti
     assert order.result_dispatch_status == OrderDispatchState.SENT
     assert order.acknowledgement_status == AcknowledgementStatus.FAILED
     assert order.acknowledgement_error
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert "acknowledgement_failed" in services.notifier.kinds()
 
     async with session_scope() as session:
@@ -321,7 +321,7 @@ async def test_acknowledgement_retry_budget_is_bounded(destinations):
     # One initial attempt plus one retry, then the budget stops the loop.
     assert order.acknowledgement_attempts == 2
     # Crucially, the result was never dispatched more than once.
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ async def test_multiple_simultaneous_success_signals_dispatch_once(destinations)
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.SUCCESS
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert len(services.gateway.reactions) == 1
 
     async with session_scope() as session:
@@ -371,7 +371,7 @@ async def test_repeated_pipeline_runs_are_idempotent(destinations):
     for _ in range(3):
         await services.finalizer.run_pipeline(order_id)
 
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert len(services.gateway.reactions) == 1
 
 
@@ -398,7 +398,7 @@ async def test_late_signal_on_a_terminal_order_changes_nothing(destinations):
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.SUCCESS
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert len(services.gateway.messages_in(FAILURE_CHAT_ID)) == 0
     assert len(services.gateway.reactions) == 1
 
@@ -454,7 +454,7 @@ async def test_flow_completes_across_a_bot_restart(destinations, session_factory
     assert order.status == OrderStatus.SUCCESS
     assert order.result_dispatch_status == OrderDispatchState.SENT
     assert order.acknowledgement_status == AcknowledgementStatus.APPLIED
-    assert len(gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert gateway.reactions[-1].reaction == "👍"
 
 
@@ -485,7 +485,7 @@ async def test_recovery_finishes_a_dispatch_interrupted_mid_flight(
 
     order = await get_order(order_id)
     assert order.result_dispatch_status == OrderDispatchState.SENT
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +506,7 @@ async def test_manual_override_can_dispatch_without_acknowledging(destinations):
 
     order = await get_order(order_id)
     assert order.status == OrderStatus.SUCCESS
-    assert len(services.gateway.messages_in(SUCCESS_CHAT_ID)) == 1
+    assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
     assert services.gateway.reactions == []
 
 
