@@ -22,6 +22,7 @@ from app.bot.middlewares import (
 from app.config import Settings, get_settings
 from app.database.engine import dispose_engine, get_session_factory, init_engine
 from app.health import HealthServer
+from app.orders import startup_guard
 from app.services.bootstrap import bootstrap
 from app.services.container import build_services
 from app.utils.logging import configure_logging, get_logger
@@ -167,6 +168,11 @@ async def run(settings: Settings) -> None:
             await services.notifier.startup_completed(me.username, me.id)
         except Exception:  # noqa: BLE001 - a failed notice must not stop the bot
             logger.exception("startup_notification_failed")
+
+        # Fixes the reference point for the startup backlog guard: posts
+        # older than this were queued by Telegram while the bot was down.
+        started_at = startup_guard.mark_started()
+        logger.info("polling_started", started_at=started_at.isoformat())
 
         polling_task = asyncio.create_task(
             dispatcher.start_polling(

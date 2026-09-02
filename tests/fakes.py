@@ -23,6 +23,7 @@ class SentMessage:
     chat_id: int
     message_id: int
     kind: str
+    topic_id: int = 0
     text: str | None = None
     caption: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
@@ -58,7 +59,9 @@ class FakeGateway:
         self._next_message_id += 1
         return self._next_message_id
 
-    async def send_composed(self, chat_id: int, composed: ComposedOrder) -> list[int]:
+    async def send_composed(
+        self, chat_id: int, composed: ComposedOrder, topic_id: int | None = None
+    ) -> list[int]:
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_ids: list[int] = []
@@ -70,6 +73,7 @@ class FakeGateway:
                         SentMessage(
                             chat_id=chat_id,
                             message_id=message_id,
+                            topic_id=topic_id or 0,
                             kind="album_item",
                             caption=item.get("caption"),
                             payload=item,
@@ -82,6 +86,7 @@ class FakeGateway:
                     SentMessage(
                         chat_id=chat_id,
                         message_id=message_id,
+                        topic_id=topic_id or 0,
                         kind=operation.kind,
                         text=operation.payload.get("text"),
                         caption=operation.payload.get("caption"),
@@ -91,7 +96,9 @@ class FakeGateway:
                 message_ids.append(message_id)
         return message_ids
 
-    async def send_attachments(self, chat_id: int, attachments, caption=None) -> list[int]:
+    async def send_attachments(
+        self, chat_id: int, attachments, caption=None, topic_id: int | None = None
+    ) -> list[int]:
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_ids: list[int] = []
@@ -101,6 +108,7 @@ class FakeGateway:
                 SentMessage(
                     chat_id=chat_id,
                     message_id=message_id,
+                    topic_id=topic_id or 0,
                     kind="attachment",
                     caption=caption if index == 0 else attachment.caption,
                     payload={
@@ -113,7 +121,13 @@ class FakeGateway:
             message_ids.append(message_id)
         return message_ids
 
-    async def send_reply(self, chat_id: int, reply_to_message_id: int, text: str) -> int:
+    async def send_reply(
+        self,
+        chat_id: int,
+        reply_to_message_id: int,
+        text: str,
+        topic_id: int | None = None,
+    ) -> int:
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_id = self._allocate()
@@ -129,7 +143,7 @@ class FakeGateway:
         self.deleted.append((chat_id, message_id))
         return True
 
-    async def send_text(self, chat_id: int, text: str) -> int:
+    async def send_text(self, chat_id: int, text: str, topic_id: int | None = None) -> int:
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_id = self._allocate()

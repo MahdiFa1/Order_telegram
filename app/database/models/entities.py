@@ -98,8 +98,14 @@ class OperatorWorkGroup(Base, IntPK, TimestampMixin):
 # ---------------------------------------------------------------------------
 class SourceChannel(Base, IntPK, TimestampMixin):
     __tablename__ = "source_channels"
+    # A forum group can feed several sources, one per topic, so the chat id
+    # alone is no longer unique -- the pair is.
+    __table_args__ = (UniqueConstraint("chat_id", "topic_id"),)
 
-    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    #: Forum topic to read from. 0 means "the whole chat", which is what a
+    #: channel or a non-forum group always is.
+    topic_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     title: Mapped[str | None] = mapped_column(String(256))
     username: Mapped[str | None] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -107,8 +113,11 @@ class SourceChannel(Base, IntPK, TimestampMixin):
 
 class WorkGroup(Base, IntPK, TimestampMixin):
     __tablename__ = "work_groups"
+    __table_args__ = (UniqueConstraint("chat_id", "topic_id"),)
 
-    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    #: Forum topic orders are delivered into. 0 means the group itself.
+    topic_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     title: Mapped[str | None] = mapped_column(String(256))
     username: Mapped[str | None] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -412,10 +421,39 @@ class OrderSignal(Base, IntPK, TimestampMixin):
 # ---------------------------------------------------------------------------
 class ResultDestination(Base, IntPK, TimestampMixin):
     __tablename__ = "result_destinations"
-    __table_args__ = (UniqueConstraint("status", "chat_id"),)
+    __table_args__ = (
+        # A destination is either dedicated to one source channel or shared by
+        # every source. Two partial indexes rather than one constraint,
+        # because SQL treats NULLs as distinct and would let duplicates
+        # through on the shared rows.
+        Index(
+            "uq_result_destination_shared",
+            "status",
+            "chat_id",
+            "topic_id",
+            unique=True,
+            postgresql_where=text("source_channel_id IS NULL"),
+        ),
+        Index(
+            "uq_result_destination_per_source",
+            "status",
+            "chat_id",
+            "topic_id",
+            "source_channel_id",
+            unique=True,
+            postgresql_where=text("source_channel_id IS NOT NULL"),
+        ),
+    )
 
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: Forum topic results are posted into. 0 means the chat itself.
+    topic_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: NULL means "every source". A row bound to a source wins over the
+    #: shared rows for orders coming from that source.
+    source_channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_channels.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str | None] = mapped_column(String(256))
     username: Mapped[str | None] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

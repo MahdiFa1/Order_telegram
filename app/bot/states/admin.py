@@ -11,6 +11,7 @@ class AddChat(StatesGroup):
 
 class EditChat(StatesGroup):
     waiting_for_title = State()
+    waiting_for_topic = State()
 
 
 class AddOperator(StatesGroup):

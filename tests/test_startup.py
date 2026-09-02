@@ -572,6 +572,8 @@ async def test_every_user_facing_string_is_persian():
         "Consumer", "key", "secret", "https", "com", "json", "ck", "cs",
         # WooCommerce order status slugs shown as examples.
         "completed", "processing", "cancelled", "refunded", "failed",
+        # The Telegram message link an admin reads the topic id out of.
+        "me",
     }
 
     offenders: list[tuple[str, str]] = []

@@ -209,6 +209,7 @@ class AuditEvent(StrEnum):
     ORDER_REJECTED = "ORDER_REJECTED"
     SOURCE_REACTION_APPLIED = "SOURCE_REACTION_APPLIED"
     SOURCE_REACTION_FAILED = "SOURCE_REACTION_FAILED"
+    ORDER_SKIPPED_BACKLOG = "ORDER_SKIPPED_BACKLOG"
     ORDER_IN_PROGRESS = "ORDER_IN_PROGRESS"
     WOOCOMMERCE_UPDATED = "WOOCOMMERCE_UPDATED"
     WOOCOMMERCE_FAILED = "WOOCOMMERCE_FAILED"
@@ -239,6 +240,21 @@ class AttachmentSource(StrEnum):
     OPERATOR = "OPERATOR"
 
 
+class StartupBacklogMode(StrEnum):
+    """What to do with source posts that arrived while the bot was down.
+
+    Telegram queues updates and delivers them on reconnect, so a restart can
+    otherwise replay a whole day of posts into the work group.
+    """
+
+    #: Process everything Telegram delivers (the original behaviour).
+    ALL = "ALL"
+    #: Ignore anything posted before the bot started.
+    IGNORE_DOWNTIME = "IGNORE_DOWNTIME"
+    #: Ignore anything older than the configured number of minutes.
+    MAX_AGE = "MAX_AGE"
+
+
 class ResultContentMode(StrEnum):
     """What the result destination receives."""
 
@@ -262,3 +278,6 @@ class SettingKey(StrEnum):
     WOO_CONSUMER_SECRET = "woo_consumer_secret"
     # --- result content ---
     RESULT_CONTENT_MODE = "result_content_mode"
+
+    STARTUP_BACKLOG_MODE = "startup_backlog_mode"
+    STARTUP_BACKLOG_MAX_AGE_MINUTES = "startup_backlog_max_age_minutes"

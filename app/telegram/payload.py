@@ -9,6 +9,7 @@ the source message still existing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from aiogram.types import Message
@@ -28,6 +29,10 @@ class MessagePayload:
     caption_entities: list[dict[str, Any]] | None = None
     media_group_id: str | None = None
     has_spoiler: bool = False
+    #: Forum topic the message was posted in; 0 for a plain chat.
+    topic_id: int = 0
+    #: When Telegram says the message was sent, used by the startup guard.
+    sent_at: datetime | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def as_columns(self, position: int = 0) -> dict[str, Any]:
@@ -60,6 +65,17 @@ def _dump_entities(entities: list | None) -> list[dict[str, Any]] | None:
     return dumped
 
 
+def topic_of(message: Message) -> int:
+    """The forum topic a message belongs to, or 0 for the chat itself.
+
+    Telegram sets ``message_thread_id`` on replies inside a normal group as
+    well, so it only counts as a topic when the message really is in one.
+    """
+    if not getattr(message, "is_topic_message", False):
+        return 0
+    return int(getattr(message, "message_thread_id", 0) or 0)
+
+
 def _author(message: Message) -> dict[str, Any]:
     """Who posted, for addressing a rejection reply.
 
@@ -85,6 +101,8 @@ def extract_payload(message: Message) -> MessagePayload:
         "extra": _author(message),
         "chat_id": message.chat.id,
         "message_id": message.message_id,
+        "topic_id": topic_of(message),
+        "sent_at": message.date,
         "media_group_id": message.media_group_id,
         "caption": message.caption,
         "caption_entities": _dump_entities(message.caption_entities),

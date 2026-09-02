@@ -265,6 +265,9 @@ class OrderRepository(BaseRepository):
         )
         return result.scalar_one()
 
+    async def get_delivery(self, delivery_id: int) -> OrderDelivery | None:
+        return await self.session.get(OrderDelivery, delivery_id)
+
     async def claim_delivery(self, delivery_id: int) -> bool:
         """Atomically move a delivery PENDING/FAILED -> SENDING."""
         result = await self.session.execute(

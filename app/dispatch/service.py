@@ -75,8 +75,8 @@ class DispatchService:
             order = await orders.get(order_id)
             if order is None:
                 return 0
-            destinations = await ResultDestinationRepository(session).list_for_status(
-                status, only_enabled=True
+            destinations = await ResultDestinationRepository(session).list_for_source(
+                status, order.source_channel_id, only_enabled=True
             )
             if not destinations:
                 await orders.set_dispatch_state(order_id, OrderDispatchState.NOT_REQUIRED)
@@ -113,6 +113,12 @@ class DispatchService:
                 return
             chat_id = claimed.chat_id
             attempts = claimed.attempts
+            # The destination may point at a forum topic rather than the
+            # chat's main view.
+            destination = await ResultDestinationRepository(session).get(
+                claimed.destination_id
+            )
+            topic_id = destination.topic_id if destination is not None else 0
 
         try:
             async with session_scope() as session:
@@ -153,13 +159,16 @@ class DispatchService:
 
             message_ids: list[int] = []
             if send_order:
-                message_ids.extend(await self.gateway.send_composed(chat_id, composed))
+                message_ids.extend(
+                    await self.gateway.send_composed(chat_id, composed, topic_id)
+                )
             if attachments:
                 message_ids.extend(
                     await self.gateway.send_attachments(
                         chat_id,
                         attachments,
                         caption=None if send_order else footer,
+                        topic_id=topic_id,
                     )
                 )
         except Exception as error:  # noqa: BLE001 - persisted, never fatal

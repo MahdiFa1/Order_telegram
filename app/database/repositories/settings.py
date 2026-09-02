@@ -11,7 +11,12 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import Setting
 from app.database.repositories.base import BaseRepository
-from app.utils.enums import CounterScope, ResultContentMode, SettingKey
+from app.utils.enums import (
+    CounterScope,
+    ResultContentMode,
+    SettingKey,
+    StartupBacklogMode,
+)
 
 DEFAULTS: dict[str, str] = {
     SettingKey.COUNTER_SCOPE: CounterScope.GLOBAL,
@@ -28,6 +33,8 @@ DEFAULTS: dict[str, str] = {
     SettingKey.WOO_BASE_URL: "",
     SettingKey.WOO_CONSUMER_KEY: "",
     SettingKey.WOO_CONSUMER_SECRET: "",
+    SettingKey.STARTUP_BACKLOG_MODE: StartupBacklogMode.MAX_AGE,
+    SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES: "15",
 }
 
 
@@ -88,6 +95,21 @@ class SettingRepository(BaseRepository):
             return ResultContentMode(raw)
         except ValueError:
             return ResultContentMode.ORDER_AND_ATTACHMENTS
+
+    async def startup_backlog_mode(self) -> StartupBacklogMode:
+        raw = await self.get(SettingKey.STARTUP_BACKLOG_MODE)
+        try:
+            return StartupBacklogMode(raw)
+        except ValueError:
+            return StartupBacklogMode.MAX_AGE
+
+    async def startup_backlog_max_age(self) -> int:
+        """Minutes, clamped to something a human would actually choose."""
+        raw = await self.get(SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES)
+        try:
+            return max(1, min(1440, int(raw)))
+        except (TypeError, ValueError):
+            return 15
 
     async def woo_credentials(self) -> tuple[str, str, str]:
         return (

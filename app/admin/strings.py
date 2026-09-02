@@ -133,7 +133,28 @@ CHAT_DETAIL = (
     "وضعیت: {status}\n"
     "تاریخ ایجاد: {created}\n"
 )
+CHAT_DETAIL_TOPIC = "تاپیک: {topic}\n"
 CHAT_DETAIL_DESTINATION_EXTRA = "الزامی: {required}\nاصلی: {primary}\n"
+CHAT_DETAIL_DESTINATION_SOURCE = "مبدأ: {source}\n"
+TOPIC_NONE = "کل گفتگو"
+BTN_SET_TOPIC = "🧵 تاپیک"
+SET_TOPIC_PROMPT = (
+    "شناسه‌ی عددی تاپیک را بفرستید.\n\n"
+    "برای اینکه پیام‌ها به کل گفتگو برود (نه یک تاپیک خاص)، عدد <code>0</code> را بفرستید.\n\n"
+    "شناسه‌ی تاپیک را از لینک پیام داخل آن تاپیک می‌گیرید: در "
+    "<code>t.me/c/123456/<b>25</b>/98</code> عدد وسط، یعنی <b>25</b>، شناسه‌ی تاپیک است."
+)
+TOPIC_SAVED = "✅ تاپیک روی {topic} تنظیم شد"
+TOPIC_INVALID = "⛔️ یک عدد صحیح بفرستید (یا 0 برای کل گفتگو)."
+BTN_SET_DEST_SOURCE = "📥 مبدأ اختصاصی"
+DEST_SOURCE_INTRO = (
+    "این مقصد نتایج کدام مبدأ را دریافت کند؟\n\n"
+    "«همه‌ی مبدأها» یعنی مقصد مشترک است. اگر برای یک مبدأ حتی یک مقصد اختصاصی "
+    "تعریف شود، نتایج آن مبدأ <b>فقط</b> به مقصدهای اختصاصی خودش می‌رود و "
+    "مقصدهای مشترک را نادیده می‌گیرد."
+)
+DEST_SOURCE_ALL = "🌐 همه‌ی مبدأها"
+DEST_SOURCE_SAVED = "✅ مبدأ این مقصد روی «{source}» تنظیم شد"
 EDIT_TITLE_PROMPT = "عنوان جدید این گفتگو را بفرستید."
 CONFIRM_DELETE_CHAT = (
     "⚠️ این مورد حذف شود؟\n\n"
@@ -374,6 +395,26 @@ TEST_REACTION_RESULT = "{icon} نتیجه‌ی آزمایش: {detail}"
 # Source-message reactions
 # ---------------------------------------------------------------------------
 MENU_SOURCE_REACTIONS = "🔁 واکنش کانال مبدأ"
+BACKLOG_TITLE = "⏱ پیام‌های زمان خاموشی"
+BACKLOG_INTRO = (
+    "وقتی ربات خاموش است، تلگرام پست‌های کانال مبدأ را در صف نگه می‌دارد و "
+    "هنگام روشن شدن همه را یک‌جا تحویل می‌دهد. این تنظیم می‌گوید با آن‌ها چه کند.\n\n"
+    "حالت فعلی: <b>{mode}</b>\n"
+    "سقف سن پیام: <b>{minutes} دقیقه</b>"
+)
+BACKLOG_MODE_LABELS = {
+    "ALL": "همه را پردازش کن",
+    "IGNORE_DOWNTIME": "هرچه قبل از روشن شدن ربات آمده نادیده گرفته شود",
+    "MAX_AGE": "فقط پیام‌های تازه‌تر از سقف سن",
+}
+BACKLOG_MODE_SAVED = "✅ حالت روی «{mode}» تنظیم شد"
+BACKLOG_AGE_PROMPT = "سقف سن پیام را بر حسب دقیقه بفرستید (بین ۱ تا ۱۴۴۰)."
+BACKLOG_AGE_SAVED = "✅ سقف سن روی {minutes} دقیقه تنظیم شد"
+
+
+def backlog_mode_label(mode: str) -> str:
+    return BACKLOG_MODE_LABELS.get(str(mode), str(mode))
+
 
 SOURCE_STAGE_NAMES = {
     "RECEIVED": "دریافت شد",

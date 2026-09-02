@@ -54,17 +54,32 @@ class TelegramGateway:
         self.bot = bot
         self.settings = settings
 
+    @staticmethod
+    def _thread(topic_id: int | None) -> dict[str, Any]:
+        """Kwargs that place a message inside a forum topic.
+
+        0 and None both mean "the chat itself"; Telegram rejects
+        ``message_thread_id=0``, so the key is omitted entirely.
+        """
+        return {"message_thread_id": topic_id} if topic_id else {}
+
     # ------------------------------------------------------------------
     # Sending orders
     # ------------------------------------------------------------------
-    async def send_composed(self, chat_id: int, composed: ComposedOrder) -> list[int]:
+    async def send_composed(
+        self, chat_id: int, composed: ComposedOrder, topic_id: int | None = None
+    ) -> list[int]:
         """Execute every operation of a composed order, returning message ids."""
         message_ids: list[int] = []
         for operation in composed.operations:
-            message_ids.extend(await self._execute(chat_id, operation))
+            message_ids.extend(await self._execute(chat_id, operation, topic_id))
         return message_ids
 
-    async def _execute(self, chat_id: int, operation: SendOperation) -> list[int]:
+    async def _execute(
+        self, chat_id: int, operation: SendOperation, topic_id: int | None = None
+    ) -> list[int]:
+        thread = self._thread(topic_id)
+
         async def call() -> list[int]:
             if operation.kind == "text":
                 message = await self.bot.send_message(
@@ -72,11 +87,12 @@ class TelegramGateway:
                     text=operation.payload["text"],
                     entities=_entities(operation.payload.get("entities")),
                     disable_web_page_preview=True,
+                    **thread,
                 )
                 return [message.message_id]
 
             if operation.kind == "media":
-                return [await self._send_media(chat_id, operation.payload)]
+                return [await self._send_media(chat_id, operation.payload, topic_id)]
 
             if operation.kind == "album":
                 media = []
@@ -91,7 +107,9 @@ class TelegramGateway:
                     if "has_spoiler" in item and item["type"] in {"photo", "video"}:
                         kwargs["has_spoiler"] = bool(item["has_spoiler"])
                     media.append(cls(**kwargs))
-                messages = await self.bot.send_media_group(chat_id=chat_id, media=media)
+                messages = await self.bot.send_media_group(
+                    chat_id=chat_id, media=media, **thread
+                )
                 return [m.message_id for m in messages]
 
             if operation.kind == "copy":
@@ -99,6 +117,7 @@ class TelegramGateway:
                     chat_id=chat_id,
                     from_chat_id=operation.payload["from_chat_id"],
                     message_id=operation.payload["message_id"],
+                    **thread,
                 )
                 return [copied.message_id]
 
@@ -111,12 +130,15 @@ class TelegramGateway:
             operation_name=f"send_{operation.kind}",
         )
 
-    async def _send_media(self, chat_id: int, payload: dict[str, Any]) -> int:
+    async def _send_media(
+        self, chat_id: int, payload: dict[str, Any], topic_id: int | None = None
+    ) -> int:
         content_type = ContentType(payload["content_type"])
         kwargs: dict[str, Any] = {
             "chat_id": chat_id,
             "caption": payload.get("caption"),
             "caption_entities": _entities(payload.get("caption_entities")),
+            **self._thread(topic_id),
         }
         file_id = payload["file_id"]
         spoiler = payload.get("has_spoiler")
@@ -140,10 +162,13 @@ class TelegramGateway:
             raise ValueError(f"Unsupported media content type: {content_type}")
         return message.message_id
 
-    async def send_text(self, chat_id: int, text: str) -> int:
+    async def send_text(self, chat_id: int, text: str, topic_id: int | None = None) -> int:
         async def call() -> int:
             message = await self.bot.send_message(
-                chat_id=chat_id, text=text, disable_web_page_preview=True
+                chat_id=chat_id,
+                text=text,
+                disable_web_page_preview=True,
+                **self._thread(topic_id),
             )
             return message.message_id
 
@@ -154,7 +179,13 @@ class TelegramGateway:
             operation_name="send_text",
         )
 
-    async def send_reply(self, chat_id: int, reply_to_message_id: int, text: str) -> int:
+    async def send_reply(
+        self,
+        chat_id: int,
+        reply_to_message_id: int,
+        text: str,
+        topic_id: int | None = None,
+    ) -> int:
         """Reply to a specific message; falls back to a plain send if the
         message is already gone (a rejected post we just deleted)."""
 
@@ -165,12 +196,18 @@ class TelegramGateway:
                     text=text,
                     reply_to_message_id=reply_to_message_id,
                     disable_web_page_preview=True,
+                    **self._thread(topic_id),
                 )
             except TelegramBadRequest as error:
                 if "not found" not in str(error).lower():
                     raise
+                # The message is gone, so its thread has to be named
+                # explicitly or the reply lands in the group's main view.
                 message = await self.bot.send_message(
-                    chat_id=chat_id, text=text, disable_web_page_preview=True
+                    chat_id=chat_id,
+                    text=text,
+                    disable_web_page_preview=True,
+                    **self._thread(topic_id),
                 )
             return message.message_id
 
@@ -197,7 +234,11 @@ class TelegramGateway:
         return True
 
     async def send_attachments(
-        self, chat_id: int, attachments, caption: str | None = None
+        self,
+        chat_id: int,
+        attachments,
+        caption: str | None = None,
+        topic_id: int | None = None,
     ) -> list[int]:
         """Re-send operator media from stored file ids.
 
@@ -218,7 +259,9 @@ class TelegramGateway:
                 media.append(cls(**kwargs))
 
             async def send_group() -> list[int]:
-                sent = await self.bot.send_media_group(chat_id=chat_id, media=media)
+                sent = await self.bot.send_media_group(
+                    chat_id=chat_id, media=media, **self._thread(topic_id)
+                )
                 return [m.message_id for m in sent]
 
             return await with_retry(
@@ -238,7 +281,7 @@ class TelegramGateway:
             }
             message_ids.append(
                 await with_retry(
-                    lambda p=payload: self._send_media(chat_id, p),
+                    lambda p=payload: self._send_media(chat_id, p, topic_id),
                     max_attempts=self.settings.telegram_max_retries,
                     base_delay=self.settings.telegram_retry_base_delay,
                     operation_name="send_attachment",

@@ -11,6 +11,7 @@ from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import (
     audit_keyboard,
+    backlog_detail,
     counter_scope_picker,
     order_number_detail,
     settings_menu,
@@ -22,7 +23,12 @@ from app.database.engine import session_scope
 from app.audit.formatting import format_page
 from app.database.repositories import AuditRepository, SettingRepository
 from app.orders.numbering import render_display_number
-from app.utils.enums import AuditEvent, CounterScope, SettingKey
+from app.utils.enums import (
+    AuditEvent,
+    CounterScope,
+    SettingKey,
+    StartupBacklogMode,
+)
 
 router = Router(name="admin_settings")
 
@@ -128,6 +134,29 @@ async def receive_value(message: Message, state: FSMContext) -> None:
             )
         await state.clear()
         await message.answer(t.ORDER_NUMBER_SAVED)
+        return
+
+    if field == "backlog_age":
+        from app.orders.order_number import normalise_digits
+
+        try:
+            minutes = int(normalise_digits(value))
+        except ValueError:
+            minutes = -1
+        if not 1 <= minutes <= 1440:
+            await message.answer(t.BACKLOG_AGE_PROMPT)
+            return
+        async with session_scope() as session:
+            await SettingRepository(session).set(
+                SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES, str(minutes)
+            )
+            await AuditRepository(session).log(
+                AuditEvent.CONFIGURATION_CHANGED,
+                actor_user_id=message.from_user.id,
+                message=f"Startup backlog max age set to {minutes} minutes",
+            )
+        await state.clear()
+        await message.answer(t.BACKLOG_AGE_SAVED.format(minutes=t.fa_digits(minutes)))
         return
 
     if field == "num_message":
@@ -243,6 +272,54 @@ async def prompt_order_number(
     else:
         prompt = t.ORDER_NUMBER_MESSAGE_PROMPT
     await render(callback, prompt, back_keyboard("settings"))
+
+
+# ---------------------------------------------------------------------------
+# Messages queued while the bot was down
+# ---------------------------------------------------------------------------
+@router.callback_query(SettingCB.filter(F.action == "backlog"), IsAdmin())
+async def open_backlog(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_backlog(callback)
+
+
+async def _show_backlog(callback: CallbackQuery) -> None:
+    async with session_scope() as session:
+        repo = SettingRepository(session)
+        mode = await repo.startup_backlog_mode()
+        minutes = await repo.startup_backlog_max_age()
+    await render(
+        callback,
+        t.BACKLOG_INTRO.format(
+            mode=t.backlog_mode_label(mode.value), minutes=t.fa_digits(minutes)
+        ),
+        backlog_detail(mode.value),
+    )
+
+
+@router.callback_query(SettingCB.filter(F.action == "backlog_mode"), IsAdmin())
+async def set_backlog_mode(callback: CallbackQuery, callback_data: SettingCB) -> None:
+    try:
+        mode = StartupBacklogMode(callback_data.arg)
+    except ValueError:
+        await callback.answer(t.NOT_FOUND, show_alert=True)
+        return
+    async with session_scope() as session:
+        await SettingRepository(session).set(SettingKey.STARTUP_BACKLOG_MODE, mode.value)
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=callback.from_user.id,
+            message=f"Startup backlog mode set to {mode.value}",
+        )
+    await callback.answer(t.BACKLOG_MODE_SAVED.format(mode=t.backlog_mode_label(mode.value)))
+    await _show_backlog(callback)
+
+
+@router.callback_query(SettingCB.filter(F.action == "backlog_age"), IsAdmin())
+async def prompt_backlog_age(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(EditSetting.waiting_for_value)
+    await state.update_data(field="backlog_age")
+    await render(callback, t.BACKLOG_AGE_PROMPT, back_keyboard("settings"))
 
 
 # ---------------------------------------------------------------------------

@@ -18,8 +18,9 @@ from app.database.repositories import (
     RejectedMessageRepository,
     SettingRepository,
     SourceChannelRepository,
+    WorkGroupRepository,
 )
-from app.orders import intake_gate
+from app.orders import intake_gate, startup_guard
 from app.orders.order_number import describe as describe_number
 from app.routing.resolver import resolve as resolve_routing
 from app.database.repositories.orders import scope_key_for
@@ -81,7 +82,9 @@ class OrderService:
         """
         async with session_scope() as session:
             sources = SourceChannelRepository(session)
-            channel = await sources.get_enabled_by_chat_id(payload.chat_id)
+            channel = await sources.get_enabled_by_chat_id(
+                payload.chat_id, payload.topic_id
+            )
             if channel is None:
                 return IntakeResult(None, False, False, "source channel not enabled")
 
@@ -104,6 +107,27 @@ class OrderService:
                         ),
                     )
                     return IntakeResult(album_order.id, False, True, "album part attached")
+
+            # A post Telegram queued while the bot was down must not be
+            # replayed into the work group. Checked before the counter is
+            # touched, so skipping costs no order number.
+            backlog = await startup_guard.evaluate(session, payload)
+            if backlog.skipped:
+                await audit.log(
+                    AuditEvent.ORDER_SKIPPED_BACKLOG,
+                    chat_id=payload.chat_id,
+                    message_id=payload.message_id,
+                    message=f"Skipped as backlog: {backlog.reason}",
+                    data={"age_minutes": backlog.age_minutes},
+                )
+                logger.info(
+                    "source_message_backlog_skipped",
+                    chat_id=payload.chat_id,
+                    message_id=payload.message_id,
+                    reason=backlog.reason,
+                    age_minutes=backlog.age_minutes,
+                )
+                return IntakeResult(None, False, False, f"backlog: {backlog.reason}")
 
             # The order number gate runs before a number is ever allocated,
             # so a refused post consumes nothing from the daily counter.
@@ -349,6 +373,17 @@ class OrderService:
                 order = await orders.get(order_id)
                 if order is None:
                     return False
+                # The work group may be a forum topic rather than the group's
+                # main view. Resolved through the delivery's own work_group_id,
+                # because one group can be registered under several topics and
+                # the chat id alone no longer identifies which.
+                delivery = await orders.get_delivery(delivery_id)
+                group = (
+                    await WorkGroupRepository(session).get(delivery.work_group_id)
+                    if delivery is not None
+                    else None
+                )
+                topic_id = group.topic_id if group is not None else 0
                 source_messages = await orders.list_source_messages(order_id)
                 composed = compose(
                     order.display_number,
@@ -364,7 +399,7 @@ class OrderService:
                     )
                 return False
 
-            message_ids = await self.gateway.send_composed(chat_id, composed)
+            message_ids = await self.gateway.send_composed(chat_id, composed, topic_id)
         except Exception as error:  # noqa: BLE001 - recorded and retried later
             logger.warning(
                 "order_delivery_failed",

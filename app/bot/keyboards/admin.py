@@ -83,6 +83,12 @@ def chat_detail(kind: str, entity, back_section: str, arg: str = "") -> InlineKe
             callback_data=ChatCB(kind=kind, action="delete", id=entity.id, arg=arg).pack(),
         ),
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_SET_TOPIC,
+            callback_data=ChatCB(kind=kind, action="topic", id=entity.id, arg=arg).pack(),
+        ),
+    )
     if kind == "dest":
         builder.row(
             InlineKeyboardButton(
@@ -96,7 +102,51 @@ def chat_detail(kind: str, entity, back_section: str, arg: str = "") -> InlineKe
                 callback_data=ChatCB(kind=kind, action="primary", id=entity.id, arg=arg).pack(),
             ),
         )
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_SET_DEST_SOURCE,
+                callback_data=ChatCB(kind=kind, action="src", id=entity.id, arg=arg).pack(),
+            ),
+        )
     builder.row(back_button(back_section))
+    return builder.as_markup()
+
+
+def destination_source_picker(
+    destination_id: int, sources, arg: str = ""
+) -> InlineKeyboardMarkup:
+    """Bind one result destination to a single source, or to all of them."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.DEST_SOURCE_ALL,
+            callback_data=ChatCB(
+                kind="dest", action="srcset", id=destination_id, arg="0"
+            ).pack(),
+        )
+    )
+    for source in sources:
+        label = source.title or (
+            f"@{source.username}" if source.username else str(source.chat_id)
+        )
+        if source.topic_id:
+            label = f"{label} 🧵{source.topic_id}"
+        builder.row(
+            InlineKeyboardButton(
+                text=label[:60],
+                callback_data=ChatCB(
+                    kind="dest", action="srcset", id=destination_id, arg=str(source.id)
+                ).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_BACK,
+            callback_data=ChatCB(
+                kind="dest", action="view", id=destination_id, arg=arg
+            ).pack(),
+        )
+    )
     return builder.as_markup()
 
 
@@ -583,10 +633,35 @@ def settings_menu(values: dict[str, str | None]) -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
+            text=t.BACKLOG_TITLE, callback_data=SettingCB(action="backlog").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
             text=t.BTN_ADMINS, callback_data=AdminCB(action="list").pack()
         )
     )
     builder.row(back_button("main"))
+    return builder.as_markup()
+
+
+def backlog_detail(current_mode: str) -> InlineKeyboardMarkup:
+    """How source posts queued during downtime are treated on restart."""
+    builder = InlineKeyboardBuilder()
+    for mode in ("MAX_AGE", "IGNORE_DOWNTIME", "ALL"):
+        mark = "🔘 " if mode == current_mode else "⚪️ "
+        builder.row(
+            InlineKeyboardButton(
+                text=mark + t.backlog_mode_label(mode),
+                callback_data=SettingCB(action="backlog_mode", arg=mode).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BACKLOG_TITLE, callback_data=SettingCB(action="backlog_age").pack()
+        )
+    )
+    builder.row(back_button("settings"))
     return builder.as_markup()
 
 

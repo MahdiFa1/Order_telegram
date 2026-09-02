@@ -13,6 +13,7 @@ from app.bot.keyboards.admin import (
     chat_detail,
     chat_list,
     confirm_delete,
+    destination_source_picker,
     destinations_menu,
 )
 from app.bot.keyboards.callbacks import ChatCB, Nav
@@ -25,6 +26,7 @@ from app.database.repositories import (
     SourceChannelRepository,
     WorkGroupRepository,
 )
+from app.orders.order_number import normalise_digits
 from app.services.container import Services
 from app.utils.enums import AuditEvent, OrderStatus
 
@@ -186,8 +188,19 @@ async def view_chat(callback: CallbackQuery, callback_data: ChatCB) -> None:
 
 
 async def _render_detail(callback: CallbackQuery, callback_data: ChatCB, note: str = "") -> None:
+    source_label = t.DEST_SOURCE_ALL
     async with session_scope() as session:
         entity = await _repo(session, callback_data.kind).get(callback_data.id)
+        if (
+            entity is not None
+            and callback_data.kind == "dest"
+            and entity.source_channel_id is not None
+        ):
+            bound = await SourceChannelRepository(session).get(entity.source_channel_id)
+            if bound is not None:
+                source_label = bound.title or (
+                    f"@{bound.username}" if bound.username else str(bound.chat_id)
+                )
     if entity is None:
         await callback.answer(t.NOT_FOUND, show_alert=True)
         return
@@ -204,10 +217,14 @@ async def _render_detail(callback: CallbackQuery, callback_data: ChatCB, note: s
         status=t.toggle_text(entity.enabled),
         created=t.fa_digits(f"{entity.created_at:%Y-%m-%d %H:%M}"),
     )
+    detail += t.CHAT_DETAIL_TOPIC.format(
+        topic=t.fa_digits(str(entity.topic_id)) if entity.topic_id else t.TOPIC_NONE
+    )
     if callback_data.kind == "dest":
         detail += t.CHAT_DETAIL_DESTINATION_EXTRA.format(
             required=t.yes_no(entity.required), primary=t.yes_no(entity.is_primary)
         )
+        detail += t.CHAT_DETAIL_DESTINATION_SOURCE.format(source=source_label)
     if note:
         detail += f"\n{note}"
     await render(callback, detail, chat_detail(callback_data.kind, entity, back, callback_data.arg))
@@ -305,6 +322,86 @@ async def receive_title(message: Message, state: FSMContext) -> None:
         _list_text(data["kind"], data.get("arg", ""), entities),
         reply_markup=chat_list(data["kind"], entities, back, data.get("arg", "")),
     )
+
+
+@router.callback_query(ChatCB.filter(F.action == "topic"), IsAdmin())
+async def prompt_topic(callback: CallbackQuery, callback_data: ChatCB, state: FSMContext) -> None:
+    await state.set_state(EditChat.waiting_for_topic)
+    await state.update_data(
+        kind=callback_data.kind, entity_id=callback_data.id, arg=callback_data.arg
+    )
+    await render(
+        callback,
+        t.SET_TOPIC_PROMPT,
+        back_keyboard(_SECTION_FOR_KIND[callback_data.kind]),
+    )
+
+
+@router.message(EditChat.waiting_for_topic, IsAdmin())
+async def receive_topic(message: Message, state: FSMContext) -> None:
+    raw = normalise_digits((message.text or "").strip())
+    try:
+        topic_id = int(raw)
+    except ValueError:
+        await message.answer(t.TOPIC_INVALID)
+        return
+    if topic_id < 0:
+        await message.answer(t.TOPIC_INVALID)
+        return
+
+    data = await state.get_data()
+    async with session_scope() as session:
+        await _repo(session, data["kind"]).set_topic(data["entity_id"], topic_id)
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=message.from_user.id,
+            message=f"{data['kind']} #{data['entity_id']} topic set to {topic_id}",
+        )
+        entities = await _list_entities(session, data["kind"], data.get("arg", ""))
+    await state.clear()
+    back = "main" if data["kind"] != "dest" else "destinations"
+    await message.answer(
+        t.TOPIC_SAVED.format(
+            topic=t.fa_digits(str(topic_id)) if topic_id else t.TOPIC_NONE
+        )
+    )
+    await message.answer(
+        _list_text(data["kind"], data.get("arg", ""), entities),
+        reply_markup=chat_list(data["kind"], entities, back, data.get("arg", "")),
+    )
+
+
+@router.callback_query(ChatCB.filter(F.action == "src"), IsAdmin())
+async def prompt_destination_source(callback: CallbackQuery, callback_data: ChatCB) -> None:
+    """Choose which source this result destination serves."""
+    async with session_scope() as session:
+        sources = await SourceChannelRepository(session).list_all()
+    await render(
+        callback,
+        t.DEST_SOURCE_INTRO,
+        destination_source_picker(callback_data.id, sources, callback_data.arg),
+    )
+
+
+@router.callback_query(ChatCB.filter(F.action == "srcset"), IsAdmin())
+async def set_destination_source(callback: CallbackQuery, callback_data: ChatCB) -> None:
+    source_id = int(callback_data.arg or 0) or None
+    label = t.DEST_SOURCE_ALL
+    async with session_scope() as session:
+        await ResultDestinationRepository(session).set_source(callback_data.id, source_id)
+        if source_id is not None:
+            bound = await SourceChannelRepository(session).get(source_id)
+            if bound is not None:
+                label = bound.title or (
+                    f"@{bound.username}" if bound.username else str(bound.chat_id)
+                )
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=callback.from_user.id,
+            message=f"destination #{callback_data.id} bound to source {source_id or 'ALL'}",
+        )
+    await callback.answer(t.DEST_SOURCE_SAVED.format(source=label))
+    await _render_detail(callback, ChatCB(kind="dest", action="view", id=callback_data.id))
 
 
 @router.callback_query(ChatCB.filter(F.action == "delete"), IsAdmin())

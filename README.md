@@ -182,11 +182,40 @@ docker/entrypoint.sh          # wait for DB → migrate → exec app
 - The number is read **once**, at intake, and stored on the order, so nothing an
   operator later types in the work group (`420x2✅` and the like) can change it.
 
+### Messages queued during downtime
+Telegram holds updates for an offline bot and delivers them all at once on
+reconnect, so a restart can otherwise replay a whole day of posts into the
+work group. Three modes, set from `⚙️ تنظیمات`:
+
+| Mode | Behaviour |
+| --- | --- |
+| `MAX_AGE` (default) | only posts newer than N minutes (default 15) become orders |
+| `IGNORE_DOWNTIME` | anything posted before the bot started is skipped |
+| `ALL` | process the whole backlog |
+
+A skipped post is recorded in the audit log and **consumes no order number**,
+so the daily counter stays continuous.
+
 ### Numbering
 - `order1`, `order2`, … reset daily on the `Asia/Tehran` business date.
 - Atomic allocation; two concurrent orders get N and N+1.
 - Scope `GLOBAL` (default) or `PER_SOURCE`.
 - Prefix and format configurable (`{prefix}{number}` → `order125`, `ORD-{number}` → `ORD-125`).
+
+### Forum topics
+Every leg of the pipeline can be pinned to a Telegram forum topic, not just a
+chat. Source channels, work groups and result destinations each carry a
+`topic_id`; `0` means the chat itself, which is what a channel or a non-forum
+group always is.
+
+- A group registered **per topic** accepts only posts from that topic, so one
+  forum can feed several independent sources.
+- A group registered **as a whole** keeps accepting every topic in it, so
+  existing setups are unaffected.
+- Orders are delivered into the work group's topic, and results into the
+  destination's topic.
+- The topic id is the middle number of a message link inside it:
+  `t.me/c/123456/`**`25`**`/98`.
 
 ### Routing
 - Any source → one or many work groups; routes can be enabled, disabled or deleted.
@@ -207,6 +236,10 @@ docker/entrypoint.sh          # wait for DB → migrate → exec app
 ### Result dispatch
 - Separate destinations per status; several per status supported.
 - Each destination can be marked *required* and one is *primary*.
+- **Per source.** A destination can be bound to one source channel. A source
+  with its own destinations uses only those; a source without any falls back
+  to the shared ones — the two are never mixed, so a result is never sent
+  twice.
 - Per-destination state (`SENT` / `FAILED`) recorded individually.
 - **Operator attachments are forwarded.** Photos, videos, documents, audio,
   voice notes and animations the operator replied with are sent on to the result
@@ -487,7 +520,12 @@ under `⚙️ تنظیمات`.
 9. **🧾 محتوای نتیجه** — optional: the text appended per status, whether
    operator attachments are forwarded, and the WooCommerce connection.
 10. **⚙️ تنظیمات** — optional: turn the store order number on, set its digit
-    count, the rejection message and whether the refused post is deleted.
+    count, the rejection message and whether the refused post is deleted; and
+    choose what happens to posts Telegram queued while the bot was down.
+
+Each source channel, work group and result destination also has a `🧵 تاپیک`
+button for pinning it to a forum topic, and every result destination has a
+`📥 مبدأ اختصاصی` button for binding it to a single source.
 
 ### Worked example
 
