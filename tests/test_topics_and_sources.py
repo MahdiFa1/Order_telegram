@@ -293,3 +293,39 @@ async def test_media_backlog_is_skipped_too(wired):
         sent_at=datetime.now(timezone.utc) - timedelta(hours=6),
     )
     assert (await wired.orders.ingest(payload)).order_id is None
+
+
+async def test_a_two_day_backlog_is_skipped_with_no_setting_configured(wired):
+    """The exact situation after an outage: nothing configured, posts replayed.
+
+    A database upgraded from an older version has no row for the backlog
+    setting at all, so this asserts the *default* is the safe one -- a
+    redeploy after days of downtime must not push old posts through.
+    """
+    async with session_scope() as session:
+        # Prove the setting really is absent, not merely unset to the default.
+        from app.database.models import Setting
+        from sqlalchemy import select
+
+        rows = (
+            await session.execute(
+                select(Setting).where(
+                    Setting.key.in_(
+                        [
+                            SettingKey.STARTUP_BACKLOG_MODE,
+                            SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES,
+                        ]
+                    )
+                )
+            )
+        ).scalars().all()
+        assert rows == []
+
+    for hours in (48, 36, 24, 2, 1):
+        result = await wired.orders.ingest(_aged(SOURCE_CHAT_ID, hours * 60))
+        assert result.order_id is None, f"a {hours}h old post was replayed"
+
+    # A post from right now still becomes order1: the counter was untouched.
+    fresh = await wired.orders.ingest(_aged(SOURCE_CHAT_ID, 0))
+    assert fresh.order_id is not None
+    assert (await get_order(fresh.order_id)).daily_number == 1
