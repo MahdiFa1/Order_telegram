@@ -31,7 +31,7 @@ from app.database.repositories import (
     SourceChannelRepository,
     WooCommerceRepository,
 )
-from app.dispatch.policy import load_store_policy
+from app.dispatch.policy import load_store_policy, load_telegram_policy
 from app.services.container import Services
 from app.utils.enums import OrderStatus
 from app.utils.time import business_date, format_local
@@ -143,9 +143,16 @@ async def _order_screen(order_id: int) -> tuple[str, object]:
         signals = await OrderRepository(session).list_signals(order_id)
         dispatches = await AcknowledgementRepository(session).list_dispatches(order_id)
         store_call = await WooCommerceRepository(session).get_call(order_id)
-        policy = await load_store_policy(session)
+        store_policy = await load_store_policy(session)
+        telegram_policy = await load_telegram_policy(session)
         detail = texts.order_detail(
-            order, source, signals, dispatches, store_call, policy.max_attempts
+            order,
+            source,
+            signals,
+            dispatches,
+            store_call,
+            store_policy.max_attempts,
+            telegram_policy.max_attempts,
         )
         return truncate(detail), order_actions(order, store_call)
 
@@ -208,7 +215,13 @@ async def _apply_override(
 
 @router.callback_query(OrderCB.filter(F.action == "retry"), IsAdmin())
 async def retry_pipeline(callback: CallbackQuery, callback_data: OrderCB, services: Services) -> None:
-    await services.finalizer.run_pipeline(callback_data.id)
+    """Try the whole pipeline again now, whatever each leg's backoff says.
+
+    An admin presses this after fixing something -- re-adding the bot to a
+    channel, allowing the emoji -- so every schedule starts over.
+    """
+    await callback.answer()
+    await services.finalizer.run_pipeline(callback_data.id, force=True)
     text, markup = await _order_screen(callback_data.id)
     await render(callback, text, markup)
 

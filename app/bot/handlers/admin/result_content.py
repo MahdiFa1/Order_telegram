@@ -40,7 +40,7 @@ from app.utils.enums import (
     OrderStatus,
     ResultContentMode,
     SettingKey,
-    StoreAlertMode,
+    RetryAlertMode,
 )
 from app.utils.time import utcnow
 
@@ -395,7 +395,7 @@ async def receive_retry_number(message: Message, state: FSMContext) -> None:
         value = -1
     if not low <= value <= high:
         await message.answer(
-            t.WOO_NUMBER_INVALID.format(low=t.fa_digits(low), high=t.fa_digits(high))
+            t.RETRY_NUMBER_INVALID.format(low=t.fa_digits(low), high=t.fa_digits(high))
         )
         return
 
@@ -408,7 +408,7 @@ async def receive_retry_number(message: Message, state: FSMContext) -> None:
         )
         mode = await SettingRepository(session).result_content_mode()
     await state.clear()
-    await message.answer(t.WOO_RETRY_SAVED, reply_markup=result_content_menu(mode.value))
+    await message.answer(t.RETRY_SAVED, reply_markup=result_content_menu(mode.value))
 
 
 @router.callback_query(ResultCB.filter(F.action == "alert_mode"), IsAdmin())
@@ -419,7 +419,7 @@ async def prompt_alert_mode(callback: CallbackQuery) -> None:
 @router.callback_query(ResultCB.filter(F.action == "set_alert"), IsAdmin())
 async def set_alert_mode(callback: CallbackQuery, callback_data: ResultCB) -> None:
     try:
-        mode = StoreAlertMode(callback_data.arg)
+        mode = RetryAlertMode(callback_data.arg)
     except ValueError:
         await callback.answer()
         return

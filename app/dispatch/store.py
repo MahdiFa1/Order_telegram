@@ -37,7 +37,7 @@ from app.integrations.woocommerce import (
     WooCommerceError,
     is_permanent,
 )
-from app.utils.enums import AuditEvent, OrderStatus, StoreAlertMode
+from app.utils.enums import AuditEvent, OrderStatus, RetryAlertMode
 from app.utils.logging import get_logger
 from app.utils.time import utcnow
 
@@ -269,7 +269,7 @@ class StoreDispatchService:
         # An alert per attempt is only ever asked for explicitly; otherwise
         # the admins hear about the order once, when nothing is left to try.
         alert = (
-            policy.alert_mode is StoreAlertMode.EVERY_ATTEMPT
+            policy.alert_mode is RetryAlertMode.EVERY_ATTEMPT
             or (final and not already_alerted)
         )
 

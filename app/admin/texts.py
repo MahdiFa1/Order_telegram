@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from app.admin import strings as t
 from app.reports.service import OperatorReport, OrderReport, SystemStatus
-from app.utils.enums import DispatchStatus, OrderStatus, RuleMode, SignalKey
+from app.utils.enums import (
+    AcknowledgementStatus,
+    DispatchStatus,
+    OrderStatus,
+    RuleMode,
+    SignalKey,
+)
 from app.utils.time import format_duration, format_local, utcnow
 
 MAIN_TEXT = t.MAIN_TEXT
@@ -138,17 +144,20 @@ def acknowledgement_screen(status: OrderStatus, config, warnings: list[str]) -> 
     return body
 
 
-def store_retry_screen(policy) -> str:
-    """The automatic-retry settings, with the resulting schedule spelled out."""
+def _schedule_ladder(policy) -> str:
+    """"۲، ۴، ۸ دقیقه" -- the waits this policy actually produces."""
     steps = [
         int(policy.delay_after(attempt).total_seconds() // 60)
         for attempt in range(1, policy.max_attempts)
     ]
-    schedule = (
-        "، ".join(_fa(step) for step in steps) + " " + t.MINUTES_SUFFIX
-        if steps
-        else t.DASH
-    )
+    if not steps:
+        return t.DASH
+    return "، ".join(_fa(step) for step in steps) + " " + t.MINUTES_SUFFIX
+
+
+def store_retry_screen(policy) -> str:
+    """The automatic-retry settings, with the resulting schedule spelled out."""
+    schedule = _schedule_ladder(policy)
     text = t.WOO_RETRY_SCREEN.format(
         enabled=t.toggle_text(policy.enabled),
         max_attempts=_fa(policy.max_attempts),
@@ -157,13 +166,103 @@ def store_retry_screen(policy) -> str:
         schedule=schedule,
         timeout=_fa(policy.request_timeout),
         quick=_fa(policy.quick_retries),
-        alert=t.WOO_ALERT_MODE_NAMES.get(
+        alert=t.ALERT_MODE_NAMES.get(
             policy.alert_mode.value, policy.alert_mode.value
         ),
     )
     if not policy.enabled:
         text += f"\n\n{t.WOO_RETRY_DISABLED_HINT}"
     return text
+
+
+def telegram_retry_screen(policy, immediate_attempts: int) -> str:
+    """The Telegram retry settings, with the resulting schedule spelled out."""
+    text = t.TG_RETRY_SCREEN.format(
+        enabled=t.toggle_text(policy.enabled),
+        max_attempts=_fa(policy.max_attempts),
+        base_minutes=_fa(policy.base_minutes),
+        max_minutes=_fa(policy.max_minutes),
+        schedule=_schedule_ladder(policy),
+        alert=t.ALERT_MODE_NAMES.get(
+            policy.alert_mode.value, policy.alert_mode.value
+        ),
+        immediate=_fa(immediate_attempts),
+    )
+    if not policy.enabled:
+        text += f"\n\n{t.TG_RETRY_DISABLED_HINT}"
+    return text
+
+
+def delivery_schedule(row, now, next_attempt_at, permanent: bool, status: str,
+                      max_attempts: int | None = None, attempts: int = 0) -> str:
+    """One line saying what happens to this delivery or reaction next."""
+    if status in {DispatchStatus.SENDING, AcknowledgementStatus.APPLYING}:
+        return t.RETRY_IN_FLIGHT
+    spent = max_attempts is not None and attempts >= max_attempts
+    if permanent or spent:
+        return t.RETRY_STOPPED
+    if next_attempt_at is None or next_attempt_at <= now:
+        return t.RETRY_SOON
+    return t.RETRY_NEXT_AT.format(
+        time=_fa(format_local(next_attempt_at, "%H:%M"))
+    )
+
+
+def delivery_queue_screen(
+    dispatches,
+    acknowledgements,
+    display_numbers: dict[int, str],
+    waiting: int,
+    abandoned: int,
+    max_attempts: int,
+    now,
+) -> str:
+    """Unfinished result deliveries, and the reactions still owed."""
+    rows = [
+        t.TG_QUEUE_ROW.format(
+            icon="⏳"
+            if not row.permanent and row.attempts < max_attempts
+            else "⛔️",
+            display=display_numbers.get(row.order_id, t.DASH),
+            chat_id=_fa(row.chat_id),
+            attempts=_fa(row.attempts),
+            schedule=delivery_schedule(
+                row,
+                now,
+                row.next_attempt_at,
+                row.permanent,
+                row.status,
+                max_attempts,
+                row.attempts,
+            ),
+            error=(row.error or t.DASH)[:200],
+        )
+        for row in dispatches
+    ]
+    body = "\n\n".join(rows) if rows else t.TG_QUEUE_EMPTY
+
+    if acknowledgements:
+        ack_rows = [
+            t.TG_QUEUE_ACK_ROW.format(
+                icon="⏳" if not order.acknowledgement_permanent else "⛔️",
+                display=order.display_number,
+                attempts=_fa(order.acknowledgement_attempts),
+                schedule=delivery_schedule(
+                    order,
+                    now,
+                    order.acknowledgement_next_attempt_at,
+                    order.acknowledgement_permanent,
+                    order.acknowledgement_status,
+                ),
+                error=(order.acknowledgement_error or t.DASH)[:200],
+            )
+            for order in acknowledgements
+        ]
+        body += "\n\n" + t.TG_QUEUE_ACK_TITLE + "\n\n" + "\n\n".join(ack_rows)
+
+    return t.TG_QUEUE_SCREEN.format(
+        waiting=_fa(waiting), abandoned=_fa(abandoned), rows=body
+    )
 
 
 def store_schedule(
@@ -173,13 +272,13 @@ def store_schedule(
     if call.status == DispatchStatus.SENT:
         return t.DASH
     if call.status == DispatchStatus.SENDING:
-        return t.WOO_QUEUE_IN_FLIGHT
+        return t.RETRY_IN_FLIGHT
     spent = max_attempts is not None and call.attempts >= max_attempts
     if call.permanent or spent:
-        return t.WOO_QUEUE_STOPPED
+        return t.RETRY_STOPPED
     if call.next_attempt_at is None or call.next_attempt_at <= now:
-        return t.WOO_QUEUE_SOON
-    return t.WOO_QUEUE_WAITING.format(
+        return t.RETRY_SOON
+    return t.RETRY_NEXT_AT.format(
         time=_fa(format_local(call.next_attempt_at, fmt))
     )
 
@@ -227,6 +326,7 @@ def order_detail(
     dispatches,
     store_call=None,
     store_max_attempts: int | None = None,
+    telegram_max_attempts: int | None = None,
 ) -> str:
     signal_lines = (
         "\n".join(
@@ -236,9 +336,22 @@ def order_detail(
         )
         or f"  {t.DASH}"
     )
+    now = utcnow()
     dispatch_lines = (
         "\n".join(
-            t.DISPATCH_ROW.format(chat=_fa(d.chat_id), status=d.status)
+            t.DISPATCH_ROW.format(
+                chat=_fa(d.chat_id),
+                status=d.status,
+                schedule=delivery_schedule(
+                    d,
+                    now,
+                    d.next_attempt_at,
+                    d.permanent,
+                    d.status,
+                    telegram_max_attempts,
+                    d.attempts,
+                ),
+            )
             + (f" ({d.error[:60]})" if d.error else "")
             for d in dispatches
         )
@@ -288,6 +401,20 @@ def order_detail(
         else t.DASH,
         ack_applied=_fa(format_local(order.acknowledgement_applied_at)),
         ack_attempts=_fa(order.acknowledgement_attempts),
+        ack_schedule=delivery_schedule(
+            order,
+            now,
+            order.acknowledgement_next_attempt_at,
+            order.acknowledgement_permanent,
+            order.acknowledgement_status,
+        )
+        if order.acknowledgement_status
+        in {
+            AcknowledgementStatus.FAILED,
+            AcknowledgementStatus.PENDING,
+            AcknowledgementStatus.APPLYING,
+        }
+        else t.DASH,
         ack_error=order.acknowledgement_error or t.DASH,
         deliveries=delivery_lines,
         signals=signal_lines,

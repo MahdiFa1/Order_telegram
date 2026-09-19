@@ -67,20 +67,85 @@ class AdminNotifier:
             order = await OrderRepository(session).get(order_id)
             return order.display_number if order else f"#{order_id}"
 
-    async def dispatch_failed(self, order_id: int, chat_id: int, reason: str) -> None:
+    async def dispatch_failed(
+        self,
+        order_id: int,
+        chat_id: int,
+        reason: str,
+        *,
+        next_attempt: datetime | None = None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
+    ) -> None:
+        """Report a result that did not reach its destination.
+
+        Same split as the store: one message says when the bot will try
+        again, the other says nothing is left to try.
+        """
+        number = await self._display_number(order_id)
+        fa = t.fa_digits
+        if final:
+            key = f"dispatch_failed:{order_id}:{chat_id}"
+            text = t.NOTIFY_DISPATCH_FAILED.format(
+                number=number, chat_id=chat_id, reason=reason, attempts=fa(attempts)
+            )
+        else:
+            key = f"dispatch_failed:{order_id}:{chat_id}:{attempts}"
+            text = t.NOTIFY_DISPATCH_RETRYING.format(
+                number=number,
+                chat_id=chat_id,
+                reason=reason,
+                attempt=fa(attempts),
+                max_attempts=fa(max_attempts),
+                next_attempt=fa(format_local(next_attempt, "%H:%M")),
+            )
+        await self._send(key, text)
+
+    async def dispatch_recovered(
+        self, order_id: int, chat_id: int, attempts: int
+    ) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            f"dispatch_failed:{order_id}:{chat_id}",
-            t.NOTIFY_DISPATCH_FAILED.format(
-                number=number, chat_id=chat_id, reason=reason
+            f"dispatch_recovered:{order_id}:{chat_id}",
+            t.NOTIFY_DISPATCH_RECOVERED.format(
+                number=number, chat_id=chat_id, attempts=t.fa_digits(attempts)
             ),
         )
 
-    async def acknowledgement_failed(self, order_id: int, reason: str) -> None:
+    async def acknowledgement_failed(
+        self,
+        order_id: int,
+        reason: str,
+        *,
+        next_attempt: datetime | None = None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
+    ) -> None:
+        number = await self._display_number(order_id)
+        fa = t.fa_digits
+        if final:
+            key = f"acknowledgement_failed:{order_id}"
+            text = t.NOTIFY_ACK_FAILED.format(
+                number=number, reason=reason, attempts=fa(attempts)
+            )
+        else:
+            key = f"acknowledgement_failed:{order_id}:{attempts}"
+            text = t.NOTIFY_ACK_RETRYING.format(
+                number=number,
+                reason=reason,
+                attempt=fa(attempts),
+                max_attempts=fa(max_attempts),
+                next_attempt=fa(format_local(next_attempt, "%H:%M")),
+            )
+        await self._send(key, text)
+
+    async def acknowledgement_recovered(self, order_id: int) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            f"acknowledgement_failed:{order_id}",
-            t.NOTIFY_ACK_FAILED.format(number=number, reason=reason),
+            f"acknowledgement_recovered:{order_id}",
+            t.NOTIFY_ACK_RECOVERED.format(number=number),
         )
 
     async def conflict_detected(self, order_id: int) -> None:

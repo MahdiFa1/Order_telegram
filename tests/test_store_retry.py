@@ -25,7 +25,7 @@ from app.utils.enums import (
     DispatchStatus,
     OrderStatus,
     SettingKey,
-    StoreAlertMode,
+    RetryAlertMode,
 )
 from app.utils.time import utcnow
 from tests.conftest import (
@@ -222,7 +222,7 @@ async def test_a_spent_budget_reads_as_stopped_on_screen(destinations):
 
     rendered = texts.store_section(await _call(order_id), max_attempts=1)
 
-    assert strings.WOO_QUEUE_STOPPED in rendered
+    assert strings.RETRY_STOPPED in rendered
 
 
 async def test_a_permanent_failure_is_reported_immediately(destinations):
@@ -259,7 +259,7 @@ async def test_a_recovery_after_an_alert_is_reported_too(destinations):
 
 async def test_every_attempt_can_be_announced_when_asked(destinations):
     services = destinations
-    await _configure(**{SettingKey.WOO_ALERT_MODE: StoreAlertMode.EVERY_ATTEMPT.value})
+    await _configure(**{SettingKey.WOO_ALERT_MODE: RetryAlertMode.EVERY_ATTEMPT.value})
     FakeWooCommerceClient.fail_with = "temporary failure"
 
     order_id = await _finalised_order(services)
@@ -429,7 +429,7 @@ async def test_the_default_policy_covers_about_half_an_hour(session_factory):
         for attempt in range(1, policy.max_attempts)
     )
     assert policy.enabled is True
-    assert policy.alert_mode is StoreAlertMode.EXHAUSTED
+    assert policy.alert_mode is RetryAlertMode.EXHAUSTED
     assert 25 <= total <= 35
 
 
@@ -445,18 +445,18 @@ def test_one_call_can_never_hang_the_pipeline_for_long():
 # ---------------------------------------------------------------------------
 async def test_the_worker_keeps_asking_and_survives_a_bad_tick():
     """No Telegram update ever wakes a finished order, so this loop must."""
-    from app.dispatch.retry_worker import StoreRetryWorker
+    from app.services.retry_worker import RetryWorker
 
     ticks: list[int] = []
 
-    class FlakyStore:
-        async def retry_due(self) -> int:
+    class FlakyFinalizer:
+        async def retry_due(self) -> dict:
             ticks.append(len(ticks))
             if len(ticks) == 1:
                 raise RuntimeError("the database blinked")
-            return 1
+            return {"dispatches": 0, "acknowledgements": 0, "store_calls": 1}
 
-    worker = StoreRetryWorker(FlakyStore(), interval=0.01)
+    worker = RetryWorker(FlakyFinalizer(), interval=0.01)
     worker.start()
     for _ in range(50):
         await asyncio.sleep(0.01)
@@ -469,13 +469,13 @@ async def test_the_worker_keeps_asking_and_survives_a_bad_tick():
 
 
 async def test_stopping_the_worker_twice_is_harmless():
-    from app.dispatch.retry_worker import StoreRetryWorker
+    from app.services.retry_worker import RetryWorker
 
-    class IdleStore:
-        async def retry_due(self) -> int:
-            return 0
+    class IdleFinalizer:
+        async def retry_due(self) -> dict:
+            return {}
 
-    worker = StoreRetryWorker(IdleStore(), interval=0.01)
+    worker = RetryWorker(IdleFinalizer(), interval=0.01)
     worker.start()
     worker.start()  # already running: not started twice
     await worker.stop()

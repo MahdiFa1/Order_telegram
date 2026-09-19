@@ -41,6 +41,17 @@ from tests.helpers import (
 pytestmark = pytest.mark.asyncio
 
 
+async def _ack_due_now(order_id: int) -> None:
+    """Pretend the reaction's backoff has elapsed, without waiting it out."""
+    from datetime import timedelta
+
+    from app.utils.time import utcnow
+
+    async with session_scope() as session:
+        order = await OrderRepository(session).get(order_id)
+        order.acknowledgement_next_attempt_at = utcnow() - timedelta(seconds=1)
+
+
 async def _pending_order(services) -> tuple[int, int, int]:
     order_id = await deliver_order(services, text_payload(SOURCE_CHAT_ID, "New Order"))
     chat_id, message_id = await primary_work_group_message(order_id, WORK_GROUP_CHAT_ID)
@@ -225,7 +236,12 @@ async def test_retrying_after_the_destination_recovers_completes_the_pipeline(de
     assert services.gateway.reactions == []
 
     services.gateway.failing_chats.discard(SUCCESS_CHAT_ID)
+    # The failed send is now waiting out its backoff, so an ordinary pipeline
+    # run leaves it alone; the panel's retry button forces it.
     await services.finalizer.run_pipeline(order_id)
+    assert (await get_order(order_id)).result_dispatch_status != OrderDispatchState.SENT
+
+    await services.finalizer.run_pipeline(order_id, force=True)
 
     order = await get_order(order_id)
     assert order.result_dispatch_status == OrderDispatchState.SENT
@@ -304,7 +320,9 @@ async def test_reaction_failure_leaves_the_order_success_and_dispatch_sent(desti
 
 async def test_acknowledgement_retry_budget_is_bounded(destinations):
     services = destinations
-    services.gateway.fail_all_reactions = True
+    # A momentary failure, so the budget rather than the classifier is what
+    # ends the retries.
+    services.gateway.flaky_reactions = True
     await configure_rule(OrderStatus.SUCCESS, signals=(SignalKey.REPLY_PHOTO,))
     await configure_acknowledgement(
         OrderStatus.SUCCESS, reaction="✅", max_retry_count=2
@@ -314,6 +332,9 @@ async def test_acknowledgement_retry_budget_is_bounded(destinations):
     await operator_replies(services, order_id, photo_payload(WORK_GROUP_CHAT_ID), OPERATOR_ID)
 
     for _ in range(5):
+        # Each round starts with the backoff already elapsed, so what stops
+        # the loop is the budget rather than the clock.
+        await _ack_due_now(order_id)
         await services.acknowledgements.process(order_id)
 
     order = await get_order(order_id)
@@ -322,6 +343,29 @@ async def test_acknowledgement_retry_budget_is_bounded(destinations):
     assert order.acknowledgement_attempts == 2
     # Crucially, the result was never dispatched more than once.
     assert len(services.gateway.orders_in(SUCCESS_CHAT_ID)) == 1
+
+
+async def test_a_reaction_the_chat_refuses_is_never_retried(destinations):
+    """REACTION_INVALID is a verdict, not a hiccup: repeating it is waste."""
+    services = destinations
+    services.gateway.fail_all_reactions = True
+    await configure_rule(OrderStatus.SUCCESS, signals=(SignalKey.REPLY_PHOTO,))
+    await configure_acknowledgement(
+        OrderStatus.SUCCESS, reaction="✅", max_retry_count=5
+    )
+
+    order_id, _chat, _message = await _pending_order(services)
+    await operator_replies(services, order_id, photo_payload(WORK_GROUP_CHAT_ID), OPERATOR_ID)
+    for _ in range(3):
+        await services.acknowledgements.process(order_id)
+
+    order = await get_order(order_id)
+    assert order.acknowledgement_status == AcknowledgementStatus.FAILED
+    assert order.acknowledgement_permanent is True
+    assert order.acknowledgement_attempts == 1
+    assert order.acknowledgement_next_attempt_at is None
+    # The admins hear about it at once, because nothing will fix itself.
+    assert "acknowledgement_failed" in services.notifier.kinds()
 
 
 # ---------------------------------------------------------------------------

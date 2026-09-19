@@ -45,11 +45,11 @@ from app.database.models import (
     StatusRule,
     WorkGroup,
 )
-from app.dispatch.policy import StoreRetryPolicy
+from app.dispatch.policy import StoreRetryPolicy, TelegramRetryPolicy
 from app.utils.enums import (
     AcknowledgementTargetMode,
     DispatchStatus,
-    StoreAlertMode,
+    RetryAlertMode,
     SourceReactionStage,
     AdminRole,
     DispatchPolicy,
@@ -300,10 +300,17 @@ async def test_main_menu_is_labelled_in_persian():
         lambda: kb.woo_store_detail(),
         lambda: kb.woo_retry_detail(StoreRetryPolicy()),
         lambda: kb.woo_retry_detail(
-            StoreRetryPolicy(enabled=False, alert_mode=StoreAlertMode.EVERY_ATTEMPT)
+            StoreRetryPolicy(enabled=False, alert_mode=RetryAlertMode.EVERY_ATTEMPT)
         ),
         lambda: kb.woo_alert_mode_picker(),
         lambda: kb.woo_queue([], {}),
+        lambda: kb.telegram_retry_detail(TelegramRetryPolicy()),
+        lambda: kb.telegram_retry_detail(
+            TelegramRetryPolicy(enabled=False, alert_mode=RetryAlertMode.EVERY_ATTEMPT)
+        ),
+        lambda: kb.telegram_alert_mode_picker(),
+        lambda: kb.delivery_queue([], {}),
+        lambda: kb.delivery_queue([8, 9], {8: "order8"}),
         lambda: kb.woo_queue([a_store_call()], {8: "order8"}),
         lambda: kb.order_actions(an_order(), a_store_call()),
         lambda: kb.order_actions(

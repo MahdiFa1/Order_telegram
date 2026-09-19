@@ -162,10 +162,11 @@ async def run(settings: Settings) -> None:
         await services.orders.process_pending_deliveries()
         await _purge_old_update_ledger()
 
-        # From here on a store update that fails is retried on a schedule
-        # instead of waiting for an admin to notice the alert.
-        if services.store_retry is not None:
-            services.store_retry.start()
+        # From here on a dispatch, reaction or store update that fails is
+        # retried on a schedule instead of waiting for an admin to notice
+        # the alert.
+        if services.retry_worker is not None:
+            services.retry_worker.start()
 
         # Proof of life in Telegram itself: a message that arrives confirms the
         # token, the network, the database and the admin list all at once.
@@ -195,8 +196,8 @@ async def run(settings: Settings) -> None:
     finally:
         logger.info("shutdown_started")
         health.bot_ready = False
-        if services.store_retry is not None:
-            await services.store_retry.stop()
+        if services.retry_worker is not None:
+            await services.retry_worker.stop()
         if polling_task is not None and not polling_task.done():
             await dispatcher.stop_polling()
             try:

@@ -18,6 +18,18 @@ class FakeTelegramError(Exception):
     """Stands in for a permanent Telegram failure such as Forbidden."""
 
 
+def flaky_error(what: str) -> Exception:
+    """A failure the error classifier calls worth retrying.
+
+    ``FakeTelegramError`` is deliberately unrecognised, which the classifier
+    reads as permanent; a network error is the opposite, and that is what a
+    momentary Telegram outage actually raises.
+    """
+    from aiogram.exceptions import TelegramNetworkError
+
+    return TelegramNetworkError(method=None, message=what)
+
+
 @dataclass
 class SentMessage:
     chat_id: int
@@ -49,6 +61,10 @@ class FakeGateway:
         #: chat ids whose reactions must fail (simulates reaction not allowed)
         self.failing_reaction_chats: set[int] = set()
         self.fail_all_reactions = False
+        #: Chats and reactions that fail in a *momentary* way, so the retry
+        #: schedule applies to them instead of the "permanent" verdict.
+        self.flaky_chats: set[int] = set()
+        self.flaky_reactions = False
         self.reaction_attempts = 0
         self.replies: list[tuple[int, int, str]] = []
         self.deleted: list[tuple[int, int]] = []
@@ -62,6 +78,8 @@ class FakeGateway:
     async def send_composed(
         self, chat_id: int, composed: ComposedOrder, topic_id: int | None = None
     ) -> list[int]:
+        if chat_id in self.flaky_chats:
+            raise flaky_error(f"cannot reach Telegram for {chat_id}")
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_ids: list[int] = []
@@ -99,6 +117,8 @@ class FakeGateway:
     async def send_attachments(
         self, chat_id: int, attachments, caption=None, topic_id: int | None = None
     ) -> list[int]:
+        if chat_id in self.flaky_chats:
+            raise flaky_error(f"cannot reach Telegram for {chat_id}")
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_ids: list[int] = []
@@ -128,6 +148,8 @@ class FakeGateway:
         text: str,
         topic_id: int | None = None,
     ) -> int:
+        if chat_id in self.flaky_chats:
+            raise flaky_error(f"cannot reach Telegram for {chat_id}")
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_id = self._allocate()
@@ -144,6 +166,8 @@ class FakeGateway:
         return True
 
     async def send_text(self, chat_id: int, text: str, topic_id: int | None = None) -> int:
+        if chat_id in self.flaky_chats:
+            raise flaky_error(f"cannot reach Telegram for {chat_id}")
         if chat_id in self.failing_chats:
             raise FakeTelegramError(f"Forbidden: bot can't send to {chat_id}")
         message_id = self._allocate()
@@ -164,6 +188,8 @@ class FakeGateway:
         retry: bool = True,
     ) -> None:
         self.reaction_attempts += 1
+        if self.flaky_reactions:
+            raise flaky_error("connection reset while reacting")
         if self.fail_all_reactions or chat_id in self.failing_reaction_chats:
             raise FakeTelegramError("Bad Request: REACTION_INVALID")
         self.reactions.append(
@@ -205,6 +231,8 @@ class FakeGateway:
 
     def reset(self) -> None:
         self.sent.clear()
+        self.flaky_chats.clear()
+        self.flaky_reactions = False
         self.reactions.clear()
         self.texts.clear()
         self.replies.clear()
@@ -218,11 +246,48 @@ class RecordingNotifier:
     def __init__(self) -> None:
         self.events: list[tuple[str, tuple]] = []
 
-    async def dispatch_failed(self, order_id: int, chat_id: int, reason: str) -> None:
-        self.events.append(("dispatch_failed", (order_id, chat_id, reason)))
+    async def dispatch_failed(
+        self,
+        order_id: int,
+        chat_id: int,
+        reason: str,
+        *,
+        next_attempt=None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
+    ) -> None:
+        self.events.append(
+            (
+                "dispatch_failed" if final else "dispatch_retrying",
+                (order_id, chat_id, reason),
+            )
+        )
 
-    async def acknowledgement_failed(self, order_id: int, reason: str) -> None:
-        self.events.append(("acknowledgement_failed", (order_id, reason)))
+    async def dispatch_recovered(
+        self, order_id: int, chat_id: int, attempts: int
+    ) -> None:
+        self.events.append(("dispatch_recovered", (order_id, chat_id, attempts)))
+
+    async def acknowledgement_failed(
+        self,
+        order_id: int,
+        reason: str,
+        *,
+        next_attempt=None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
+    ) -> None:
+        self.events.append(
+            (
+                "acknowledgement_failed" if final else "acknowledgement_retrying",
+                (order_id, reason),
+            )
+        )
+
+    async def acknowledgement_recovered(self, order_id: int) -> None:
+        self.events.append(("acknowledgement_recovered", (order_id,)))
 
     async def conflict_detected(self, order_id: int) -> None:
         self.events.append(("conflict_detected", (order_id,)))

@@ -5,6 +5,7 @@ from aiogram import Router
 from app.bot.handlers.admin import (
     admins,
     chats,
+    delivery,
     menu,
     operators,
     orders,
@@ -20,6 +21,7 @@ from app.bot.handlers.admin import (
 admin_router = Router(name="admin")
 admin_router.include_router(menu.router)
 admin_router.include_router(chats.router)
+admin_router.include_router(delivery.router)
 admin_router.include_router(routing.router)
 admin_router.include_router(operators.router)
 admin_router.include_router(rules.router)

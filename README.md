@@ -123,11 +123,11 @@ app/
 │   ├── models/               # SQLAlchemy models
 │   ├── repositories/         # data access
 │   └── engine.py             # async engine + session scope
-├── services/                 # finalizer, signals, notifications, bootstrap
+├── services/                 # finalizer, signals, notifications, retry worker
 ├── config/                   # settings
 └── utils/                    # enums, time, logging
 
-tests/                        # 305 tests against a real PostgreSQL
+tests/                        # 347 tests against a real PostgreSQL
 alembic/                      # migrations
 docker/entrypoint.sh          # wait for DB → migrate → exec app
 ```
@@ -252,6 +252,38 @@ group always is.
 - Optional appended text per status, editable from the panel — for example
   `✅سفارش با موفقیت انجام شد` for SUCCESS and `❌اطلاعات اشتباه بود.` for FAILED.
 
+### Telegram retries
+The result dispatch and the acknowledgement reaction run on the same retry
+structure as the store update, because they fail the same way: the order is
+already finished, so no further event would ever try again.
+
+| | transient | permanent |
+|---|---|---|
+| examples | network error, `5xx`, `Too Many Requests` | bot removed from the chat, topic closed, `REACTION_INVALID`, nothing to send |
+| immediately | the gateway's own bounded retry (`TELEGRAM_MAX_RETRIES`) | not retried |
+| afterwards | scheduled: 2, 4, 8, 16 … minutes, up to the attempt budget | left for an admin |
+| the admins | told once the budget is spent | told at once |
+
+- **The same background worker** drives all three queues every 30 seconds, in
+  pipeline order: dispatches first, then the acknowledgement of every order it
+  just touched (that is the only thing that can have opened its gate), then the
+  failed reactions whose own backoff expired, then the store.
+- **The ordering guarantee is untouched.** A reaction is still applied only
+  after Telegram confirms the result dispatch, so a reaction waiting on a
+  delivery is never on a clock of its own — it is re-checked when that delivery
+  is retried.
+- **Exactly once still holds**: a retry re-claims the outbox row, and the claim
+  itself carries the schedule and the budget, so neither a duplicate event nor
+  a second worker can double-send.
+- **A row left mid-flight** by a killed process is released after 20 minutes.
+- Editable from 📦 مقصد نتایج → 🔁 تلاش مجدد خودکار: on/off, dispatch attempt
+  budget (1–20), first delay (1–240 min), delay cap (1–1440 min) and the alert
+  mode. How many times the *reaction* is retried stays where it always was,
+  per status under 👍 واکنش تأیید; this screen only sets its delays.
+- 📦 مقصد نتایج → 📤 صف ارسال lists every result that has not gone through and
+  every reaction still owed, with a retry button each; the order screen shows
+  the same state and its 🔁 button forces all three legs at once.
+
 ### Source-channel reactions
 The person who posted in the source channel never sees the work group, so the
 bot reports progress back on the **original source message**:
@@ -327,6 +359,8 @@ in two and treated oppositely.
 - Target modes: `SMART` (default), `TRIGGER_MESSAGE`, `ORDER_MESSAGE`.
 - Dispatch policies: `ALL_REQUIRED_DESTINATIONS` (default), `ANY_DESTINATION`, `PRIMARY_DESTINATION`.
 - Idempotent and restart-safe; a failed reaction never rolls back the order.
+- A refused reaction is retried on the schedule above, up to the per-status
+  budget; a reaction the chat forbids outright is never retried.
 - The bot's own reaction can never re-enter the rule engine.
 
 ### Operations
@@ -546,7 +580,8 @@ retried (`🔁 تلاش مجدد خودکار`) and the queue of store updates s
 4. **👤 Operators** — add the users allowed to close orders. Scope them to all
    groups or to specific ones.
 5. **📦 Result Destinations** — add the success and failure targets. Mark which are
-   *required* and pick a *primary*.
+   *required* and pick a *primary*. Its `🔁 تلاش مجدد خودکار` screen tunes what
+   happens when a send fails, and `📤 صف ارسال` shows what is still outstanding.
 6. **✅ Success Rules / ❌ Failure Rules** — enable the signals, set `ANY` or `ALL`,
    add text patterns and accepted detection reactions.
 7. **👍 واکنش تأیید** — enable the acknowledgement per status, choose the
@@ -739,6 +774,19 @@ Success and failure rules matched simultaneously. Resolve it in
 🔎 Find Order → *Mark Success* / *Mark Failed*, and narrow the rules so the two
 cannot both fire.
 
+**The result never arrived in the destination channel.**
+Open 🔎 Find Order → the order: each destination line now says what happens
+next. `FAILED` with a time means the bot will try again by itself;
+`متوقف شده` means Telegram refused in a way no retry can fix — almost always
+the bot not being an administrator in that chat, or a closed forum topic. Fix
+that, then press 🔁 on the order (or use 📦 مقصد نتایج → 📤 صف ارسال).
+
+**The result arrived but the operator's message has no reaction.**
+Same screen, the واکنش تأیید block. `PENDING` means the dispatch gate is not
+satisfied yet — fix the delivery first, and the reaction follows on its own.
+`FAILED` with `متوقف شده` usually means the chat does not allow that emoji;
+change it under 👍 واکنش تأیید and press 🔁 on the order.
+
 **The order says SUCCESS but the store still shows the old status.**
 Open 🔎 Find Order → the order and read its 🛒 فروشگاه section, or
 🧾 محتوای نتیجه → 🛒 صف فروشگاه for the whole queue. `FAILED` with a next
@@ -846,12 +894,13 @@ rather than being silently dropped.
 7. **Long polling only.** Webhooks would need a domain and TLS; the gateway and
    handler layers are unchanged by that switch.
 
-8. **Retries are bounded and in-process.** The WooCommerce update has its own
-   scheduler: a background worker retries it on an exponential backoff, and the
-   whole policy is editable from the panel. Failed Telegram dispatches and
-   acknowledgements still wait for the next pipeline run (a new event on the
-   order, manual retry from the panel, or startup recovery) — the same treatment
-   could be extended to them.
+8. **Retries are bounded and in-process.** One background worker retries the
+   result dispatch, the acknowledgement reaction and the store update on an
+   exponential backoff, and both policies are editable from the panel. The
+   worker runs inside the bot process: a second replica would double-tick, and
+   the claim-before-send pattern is what keeps that safe rather than a leader
+   election. Moving it to a queue worker is a drop-in change — the outbox is
+   already there.
 
 ### Future direction
 

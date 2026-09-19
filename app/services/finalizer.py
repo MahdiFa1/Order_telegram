@@ -202,8 +202,13 @@ class OrderFinalizer:
             )
 
     # ------------------------------------------------------------------
-    async def run_pipeline(self, order_id: int) -> None:
-        """Dispatch results, then -- only on success -- acknowledge."""
+    async def run_pipeline(self, order_id: int, *, force: bool = False) -> None:
+        """Dispatch results, then -- only on success -- acknowledge.
+
+        ``force`` is the admin pressing "try again" on the order screen: the
+        retry schedules of all three legs are reset and attempted at once,
+        because the admin may have just fixed whatever was wrong.
+        """
         async with session_scope() as session:
             order = await OrderRepository(session).get(order_id)
             if order is None:
@@ -219,14 +224,21 @@ class OrderFinalizer:
         if ack_state is AcknowledgementStatus.NOT_REQUIRED:
             await self.acknowledgements.prepare(order_id, status)
 
-        await self.dispatch.process(order_id)
-        await self.acknowledgements.process(order_id)
+        if force:
+            await self.dispatch.retry_now(order_id)
+            await self.acknowledgements.retry_now(order_id)
+        else:
+            await self.dispatch.process(order_id)
+            await self.acknowledgements.process(order_id)
 
         # The store update and the source-channel reaction are independent of
         # the Telegram result dispatch: neither can undo the order's status.
         if self.store is not None:
             if await self.store.prepare(order_id, status):
-                await self.store.process(order_id)
+                if force:
+                    await self.store.retry_now(order_id)
+                else:
+                    await self.store.process(order_id)
         if self.source_reactions is not None:
             await self.source_reactions.apply_for_status(order_id, status)
 
@@ -313,6 +325,32 @@ class OrderFinalizer:
         return FinalizationResult(order_id, new_status, True, None, "manual override")
 
     # ------------------------------------------------------------------
+    async def retry_due(self) -> dict[str, int]:
+        """Everything whose backoff has expired, in pipeline order.
+
+        The acknowledgement follows the dispatch, so an order whose result
+        has just gone out is re-checked immediately rather than on a clock
+        of its own -- that is the only thing that could have opened its gate.
+        """
+        counters = {"dispatches": 0, "acknowledgements": 0, "store_calls": 0}
+
+        touched = await self.dispatch.retry_due()
+        counters["dispatches"] = len(touched)
+        for order_id in touched:
+            try:
+                await self.acknowledgements.process(order_id)
+            except Exception:  # noqa: BLE001 - one order never stops the rest
+                logger.exception("acknowledgement_after_retry_failed", order_id=order_id)
+
+        counters["acknowledgements"] = await self.acknowledgements.retry_due()
+        if self.store is not None:
+            counters["store_calls"] = await self.store.retry_due()
+
+        if any(counters.values()):
+            logger.info("retry_tick", **counters)
+        return counters
+
+    # ------------------------------------------------------------------
     async def recover(self) -> dict[str, int]:
         """Startup recovery: finish work interrupted by a restart."""
         from datetime import timedelta
@@ -324,6 +362,8 @@ class OrderFinalizer:
             "dispatches_released": 0,
             "acks_released": 0,
             "orders_resumed": 0,
+            "dispatches_retried": 0,
+            "acks_retried": 0,
             "store_calls_retried": 0,
         }
 
@@ -342,13 +382,16 @@ class OrderFinalizer:
             except Exception:  # noqa: BLE001 - recovery must not abort startup
                 logger.exception("recovery_failed", order_id=order_id)
 
-        # A store update interrupted or failed before the restart has no
-        # event of its own to wake it: recovery is its first retry.
-        if self.store is not None:
-            try:
-                counters["store_calls_retried"] = await self.store.retry_due()
-            except Exception:  # noqa: BLE001 - recovery must not abort startup
-                logger.exception("store_recovery_failed")
+        # A dispatch, reaction or store update interrupted or failed before
+        # the restart has no event of its own to wake it: recovery is its
+        # first retry.
+        try:
+            due = await self.retry_due()
+            counters["dispatches_retried"] = due["dispatches"]
+            counters["acks_retried"] = due["acknowledgements"]
+            counters["store_calls_retried"] = due["store_calls"]
+        except Exception:  # noqa: BLE001 - recovery must not abort startup
+            logger.exception("scheduled_recovery_failed")
 
         if any(counters.values()):
             async with session_scope() as session:

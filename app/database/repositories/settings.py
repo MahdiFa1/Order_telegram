@@ -14,9 +14,9 @@ from app.database.repositories.base import BaseRepository
 from app.utils.enums import (
     CounterScope,
     ResultContentMode,
+    RetryAlertMode,
     SettingKey,
     StartupBacklogMode,
-    StoreAlertMode,
 )
 
 DEFAULTS: dict[str, str] = {
@@ -40,7 +40,12 @@ DEFAULTS: dict[str, str] = {
     SettingKey.WOO_RETRY_MAX_MINUTES: "60",
     SettingKey.WOO_REQUEST_TIMEOUT: "30",
     SettingKey.WOO_QUICK_RETRIES: "2",
-    SettingKey.WOO_ALERT_MODE: StoreAlertMode.EXHAUSTED,
+    SettingKey.WOO_ALERT_MODE: RetryAlertMode.EXHAUSTED,
+    SettingKey.TELEGRAM_RETRY_ENABLED: "true",
+    SettingKey.TELEGRAM_RETRY_MAX_ATTEMPTS: "5",
+    SettingKey.TELEGRAM_RETRY_BASE_MINUTES: "2",
+    SettingKey.TELEGRAM_RETRY_MAX_MINUTES: "60",
+    SettingKey.TELEGRAM_ALERT_MODE: RetryAlertMode.EXHAUSTED,
     SettingKey.STARTUP_BACKLOG_MODE: StartupBacklogMode.MAX_AGE,
     SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES: "15",
 }
