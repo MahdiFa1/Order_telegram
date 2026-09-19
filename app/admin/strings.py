@@ -541,6 +541,165 @@ WOO_NEEDS_ORDER_NUMBER = (
 )
 WOO_NEEDS_STORE = "اول آدرس و کلیدهای فروشگاه را در «🔗 اتصال فروشگاه» تنظیم کنید."
 
+# --- automatic retry of a failed store update ------------------------------
+BTN_WOO_RETRY = "🔁 تلاش مجدد خودکار"
+WOO_RETRY_SCREEN = (
+    "🔁 <b>تلاش مجدد خودکار فروشگاه</b>\n\n"
+    "وقتی فروشگاه لحظه‌ای جواب ندهد (قطعی اینترنت، کندی سرور، خطای موقت)، "
+    "ربات خودش دوباره تلاش می‌کند و فاصله‌ی هر تلاش دو برابر قبلی می‌شود.\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "حداکثر تلاش‌ها:\n{max_attempts} بار\n\n"
+    "فاصله‌ی اولین تلاش:\n{base_minutes} دقیقه\n\n"
+    "حداکثر فاصله:\n{max_minutes} دقیقه\n\n"
+    "زمان‌بندی:\n{schedule}\n\n"
+    "مهلت هر درخواست:\n{timeout} ثانیه\n\n"
+    "تلاش‌های فوری:\n{quick} بار\n\n"
+    "اعلام به مدیران:\n{alert}"
+)
+WOO_RETRY_DISABLED_HINT = (
+    "⚠️ تلاش مجدد خاموش است: هر خطای لحظه‌ای باید دستی رفع شود."
+)
+BTN_WOO_RETRY_MAX = "🔢 حداکثر تلاش‌ها: {value}"
+BTN_RETRY_BASE = "⏱ فاصله‌ی اول: {value} دقیقه"
+BTN_RETRY_CAP = "⏳ حداکثر فاصله: {value} دقیقه"
+BTN_WOO_TIMEOUT = "⌛️ مهلت درخواست: {value} ثانیه"
+BTN_WOO_QUICK = "⚡️ تلاش فوری: {value}"
+BTN_RETRY_ALERT = "🔔 اعلام: {value}"
+ALERT_MODE_NAMES = {
+    "EXHAUSTED": "فقط وقتی همه‌ی تلاش‌ها ناموفق شد",
+    "EVERY_ATTEMPT": "بعد از هر تلاش ناموفق",
+}
+WOO_ALERT_PROMPT = (
+    "🔔 <b>چه وقت به مدیران خبر داده شود؟</b>\n\n"
+    "<b>فقط وقتی همه‌ی تلاش‌ها ناموفق شد</b> — خطای لحظه‌ای که خودش درست "
+    "می‌شود مزاحمتی ایجاد نمی‌کند.\n\n"
+    "<b>بعد از هر تلاش ناموفق</b> — هر بار پیام می‌آید؛ برای وقتی که "
+    "می‌خواهید همه‌چیز را از نزدیک ببینید."
+)
+WOO_RETRY_MAX_PROMPT = (
+    "حداکثر تعداد تلاش برای هر سفارش را بفرستید (بین {low} و {high})."
+)
+WOO_RETRY_BASE_PROMPT = (
+    "فاصله‌ی اولین تلاش مجدد را برحسب دقیقه بفرستید (بین {low} و {high}).\n\n"
+    "فاصله‌ی تلاش‌های بعدی دو برابر می‌شود."
+)
+WOO_RETRY_CAP_PROMPT = (
+    "بیشترین فاصله‌ی بین دو تلاش را برحسب دقیقه بفرستید (بین {low} و {high})."
+)
+WOO_TIMEOUT_PROMPT = (
+    "مهلت هر درخواست به فروشگاه را برحسب ثانیه بفرستید (بین {low} و {high}).\n\n"
+    "اگر فروشگاه روی هاست کند است، عدد بزرگ‌تری بگذارید."
+)
+WOO_QUICK_PROMPT = (
+    "تعداد تلاش فوری پشت‌سرهم (با فاصله‌ی چند ثانیه‌ای) را بفرستید "
+    "(بین {low} و {high}).\n\n"
+    "این تلاش‌ها همان لحظه انجام می‌شوند و بیشتر خطاهای گذرا را حل می‌کنند."
+)
+RETRY_NUMBER_INVALID = "یک عدد بین {low} و {high} بفرستید."
+RETRY_SAVED = "✅ تنظیم ذخیره شد."
+MINUTES_SUFFIX = "دقیقه"
+
+# --- the queue of store updates that have not gone through -----------------
+BTN_WOO_QUEUE = "🛒 صف فروشگاه"
+WOO_QUEUE_SCREEN = (
+    "🛒 <b>صف به‌روزرسانی فروشگاه</b>\n\n"
+    "در انتظار تلاش بعدی: {waiting}\n"
+    "متوقف‌شده: {abandoned}\n\n"
+    "{rows}"
+)
+WOO_QUEUE_EMPTY = "هیچ به‌روزرسانی ناتمامی وجود ندارد. ✅"
+WOO_QUEUE_ROW = (
+    "{icon} <b>{display}</b> · شماره فروشگاه {order_number}\n"
+    "  تلاش‌ها: {attempts} · {schedule}\n"
+    "  {error}"
+)
+RETRY_NEXT_AT = "تلاش بعدی: {time}"
+RETRY_SOON = "در نوبت تلاش بعدی"
+RETRY_STOPPED = "متوقف شده — نیاز به بررسی"
+RETRY_IN_FLIGHT = "در حال ارسال"
+BTN_WOO_QUEUE_RETRY = "🔁 {display}"
+BTN_WOO_QUEUE_RETRY_ALL = "🔁 تلاش مجدد همه"
+WOO_QUEUE_RETRIED = "✅ تلاش انجام شد: {display}"
+WOO_QUEUE_RETRIED_ALL = "✅ {count} سفارش دوباره تلاش شد."
+WOO_QUEUE_RETRY_FAILED = "❌ باز هم ناموفق بود: {reason}"
+
+# --- the store section of an order's detail screen ------------------------
+ORDER_STORE_SECTION = (
+    "\n\n🛒 <b>فروشگاه</b>\n"
+    "  شماره فروشگاه: {order_number}\n"
+    "  وضعیت: {status}\n"
+    "  تلاش‌ها: {attempts}\n"
+    "  {schedule}\n"
+    "  خطا: {error}"
+)
+BTN_WOO_RETRY_ORDER = "🛒 تلاش مجدد فروشگاه"
+
+# ---------------------------------------------------------------------------
+# Automatic retry of a failed Telegram delivery or acknowledgement
+# ---------------------------------------------------------------------------
+BTN_TG_RETRY = "🔁 تلاش مجدد خودکار"
+TG_RETRY_SCREEN = (
+    "🔁 <b>تلاش مجدد خودکار تلگرام</b>\n\n"
+    "اگر ارسال نتیجه یا گذاشتن واکنش تأیید به‌خاطر مشکل لحظه‌ای انجام نشود "
+    "(قطعی شبکه، کندی تلگرام، محدودیت موقت)، ربات خودش دوباره تلاش می‌کند و "
+    "فاصله‌ی هر تلاش دو برابر قبلی می‌شود.\n\n"
+    "وضعیت:\n{enabled}\n\n"
+    "حداکثر تلاش برای ارسال نتیجه:\n{max_attempts} بار\n\n"
+    "فاصله‌ی اولین تلاش:\n{base_minutes} دقیقه\n\n"
+    "حداکثر فاصله:\n{max_minutes} دقیقه\n\n"
+    "زمان‌بندی:\n{schedule}\n\n"
+    "اعلام به مدیران:\n{alert}\n\n"
+    "تلاش فوری هر درخواست:\n{immediate} بار\n\n"
+    "<i>تعداد تلاش واکنش تأیید جداگانه و برای هر وضعیت در «👍 واکنش تأیید» "
+    "تنظیم می‌شود؛ فاصله‌ها و نحوه‌ی اعلام از همین صفحه می‌آید. تلاش فوری "
+    "از متغیرهای محیطی سرور خوانده می‌شود.</i>"
+)
+TG_RETRY_DISABLED_HINT = (
+    "⚠️ تلاش مجدد خاموش است: هر خطای لحظه‌ای باید دستی رفع شود."
+)
+BTN_TG_RETRY_MAX = "🔢 حداکثر تلاش‌ها: {value}"
+TG_RETRY_MAX_PROMPT = (
+    "حداکثر تعداد تلاش برای ارسال نتیجه‌ی هر سفارش را بفرستید "
+    "(بین {low} و {high})."
+)
+TG_RETRY_BASE_PROMPT = (
+    "فاصله‌ی اولین تلاش مجدد را برحسب دقیقه بفرستید (بین {low} و {high}).\n\n"
+    "فاصله‌ی تلاش‌های بعدی دو برابر می‌شود."
+)
+TG_RETRY_CAP_PROMPT = (
+    "بیشترین فاصله‌ی بین دو تلاش را برحسب دقیقه بفرستید (بین {low} و {high})."
+)
+TG_ALERT_PROMPT = (
+    "🔔 <b>چه وقت به مدیران خبر داده شود؟</b>\n\n"
+    "<b>فقط وقتی همه‌ی تلاش‌ها ناموفق شد</b> — خطای لحظه‌ای که خودش درست "
+    "می‌شود مزاحمتی ایجاد نمی‌کند.\n\n"
+    "<b>بعد از هر تلاش ناموفق</b> — هر بار پیام می‌آید."
+)
+
+BTN_TG_QUEUE = "📤 صف ارسال"
+TG_QUEUE_SCREEN = (
+    "📤 <b>صف ارسال نتایج</b>\n\n"
+    "در انتظار تلاش بعدی: {waiting}\n"
+    "متوقف‌شده: {abandoned}\n\n"
+    "{rows}"
+)
+TG_QUEUE_EMPTY = "هیچ ارسال ناتمامی وجود ندارد. ✅"
+TG_QUEUE_ROW = (
+    "{icon} <b>{display}</b> · مقصد <code>{chat_id}</code>\n"
+    "  تلاش‌ها: {attempts} · {schedule}\n"
+    "  {error}"
+)
+TG_QUEUE_ACK_TITLE = "👍 <b>واکنش‌های تأیید ناتمام</b>"
+TG_QUEUE_ACK_ROW = (
+    "{icon} <b>{display}</b>\n"
+    "  تلاش‌ها: {attempts} · {schedule}\n"
+    "  {error}"
+)
+BTN_TG_QUEUE_RETRY = "🔁 {display}"
+BTN_TG_QUEUE_RETRY_ALL = "🔁 تلاش مجدد همه"
+TG_QUEUE_RETRIED = "✅ تلاش انجام شد: {display}"
+TG_QUEUE_RETRIED_ALL = "✅ {count} سفارش دوباره تلاش شد."
+
 # ---------------------------------------------------------------------------
 # Store order number (parsed from the source message)
 # ---------------------------------------------------------------------------
@@ -663,7 +822,9 @@ SYSTEM_STATUS = (
     "سفارش‌های در انتظار: {pending}\n"
     "سفارش‌های دارای تداخل: {conflict}\n"
     "ارسال‌های ناموفق: {failed_dispatches}\n"
-    "تأییدهای ناموفق: {failed_acks}\n\n"
+    "تأییدهای ناموفق: {failed_acks}\n"
+    "فروشگاه — در صف تلاش مجدد: {store_waiting}\n"
+    "فروشگاه — متوقف‌شده: {store_abandoned}\n\n"
     "مدت فعالیت: {uptime}"
 )
 ONLINE = "✅ آنلاین"
@@ -708,13 +869,14 @@ ORDER_DETAIL = (
     "  هدف: گفتگو {ack_chat} / پیام {ack_message}\n"
     "  زمان اعمال: {ack_applied}\n"
     "  تعداد تلاش: {ack_attempts}\n"
+    "  تلاش بعدی: {ack_schedule}\n"
     "  خطا: {ack_error}\n\n"
     "<b>تحویل به گروه‌های کاری</b>\n{deliveries}\n\n"
     "<b>سیگنال‌ها</b>\n{signals}"
 )
 DELIVERY_ROW = "  • گفتگو {chat}: {status} [{messages}]"
 DELIVERY_NO_MESSAGE = "بدون پیام"
-DISPATCH_ROW = "  • {chat}: {status}"
+DISPATCH_ROW = "  • {chat}: {status} · {schedule}"
 
 BTN_MARK_SUCCESS = "✅ ثبت به‌عنوان موفق"
 BTN_MARK_FAILED = "❌ ثبت به‌عنوان ناموفق"
@@ -844,30 +1006,63 @@ AUDIT_EVENT_LABELS: dict[str, str] = {
     AuditEvent.RESULT_DISPATCH_ATTEMPTED: "تلاش برای ارسال نتیجه",
     AuditEvent.RESULT_DISPATCH_SUCCEEDED: "نتیجه ارسال شد",
     AuditEvent.RESULT_DISPATCH_FAILED: "ارسال نتیجه ناموفق",
+    AuditEvent.RESULT_DISPATCH_RETRY_SCHEDULED: "تلاش مجدد ارسال زمان‌بندی شد",
+    AuditEvent.RESULT_DISPATCH_GAVE_UP: "تلاش برای ارسال متوقف شد",
     AuditEvent.ACKNOWLEDGEMENT_ATTEMPTED: "تلاش برای واکنش تأیید",
     AuditEvent.ACKNOWLEDGEMENT_APPLIED: "واکنش تأیید گذاشته شد",
     AuditEvent.ACKNOWLEDGEMENT_FAILED: "واکنش تأیید ناموفق",
     AuditEvent.ACKNOWLEDGEMENT_SKIPPED: "واکنش تأیید انجام نشد",
+    AuditEvent.ACKNOWLEDGEMENT_RETRY_SCHEDULED: "تلاش مجدد واکنش زمان‌بندی شد",
+    AuditEvent.ACKNOWLEDGEMENT_GAVE_UP: "تلاش برای واکنش متوقف شد",
     AuditEvent.MANUAL_OVERRIDE: "تغییر دستی توسط مدیر",
     AuditEvent.RULE_CHANGED: "قانون تغییر کرد",
     AuditEvent.REACTION_CONFIGURATION_CHANGED: "تنظیمات واکنش تغییر کرد",
     AuditEvent.CONFIGURATION_CHANGED: "پیکربندی تغییر کرد",
     AuditEvent.RECOVERY_PERFORMED: "بازیابی پس از راه‌اندازی",
+    AuditEvent.WOOCOMMERCE_UPDATED: "وضعیت در فروشگاه به‌روز شد",
+    AuditEvent.WOOCOMMERCE_FAILED: "به‌روزرسانی فروشگاه ناموفق",
+    AuditEvent.WOOCOMMERCE_RETRY_SCHEDULED: "تلاش مجدد فروشگاه زمان‌بندی شد",
+    AuditEvent.WOOCOMMERCE_GAVE_UP: "تلاش برای فروشگاه متوقف شد",
 }
 
 # ---------------------------------------------------------------------------
 # Notifications sent to admins
 # ---------------------------------------------------------------------------
+NOTIFY_DISPATCH_RETRYING = (
+    "⏳ سفارش {number}\n\n"
+    "ارسال نتیجه انجام نشد (تلاش {attempt} از {max_attempts}).\n"
+    "ربات ساعت {next_attempt} دوباره تلاش می‌کند؛ کاری لازم نیست.\n\n"
+    "مقصد:\n{chat_id}\n\n"
+    "دلیل:\n{reason}"
+)
 NOTIFY_DISPATCH_FAILED = (
     "⚠️ سفارش {number}\n\n"
-    "ارسال نتیجه ناموفق بود.\n\n"
+    "ارسال نتیجه بعد از {attempts} تلاش ناموفق ماند و تلاش خودکار دیگری "
+    "انجام نمی‌شود.\n\n"
     "مقصد:\n{chat_id}\n\n"
+    "دلیل:\n{reason}\n\n"
+    "از «📦 مقصد نتایج ← 📤 صف ارسال» می‌توانید دوباره تلاش کنید."
+)
+NOTIFY_DISPATCH_RECOVERED = (
+    "✅ سفارش {number}\n\n"
+    "نتیجه سرانجام در تلاش {attempts} به مقصد رسید.\n\n"
+    "مقصد:\n{chat_id}"
+)
+NOTIFY_ACK_RETRYING = (
+    "⏳ سفارش {number}\n\n"
+    "نتیجه ارسال شد، ولی گذاشتن واکنش تأیید انجام نشد "
+    "(تلاش {attempt} از {max_attempts}).\n"
+    "ربات ساعت {next_attempt} دوباره تلاش می‌کند.\n\n"
     "دلیل:\n{reason}"
 )
 NOTIFY_ACK_FAILED = (
     "⚠️ سفارش {number}\n\n"
-    "نتیجه با موفقیت ارسال شد، ولی گذاشتن واکنش تأیید ناموفق بود.\n\n"
+    "نتیجه با موفقیت ارسال شد، ولی گذاشتن واکنش تأیید بعد از {attempts} تلاش "
+    "ناموفق ماند.\n\n"
     "دلیل:\n{reason}"
+)
+NOTIFY_ACK_RECOVERED = (
+    "✅ سفارش {number}\n\nواکنش تأیید سرانجام گذاشته شد."
 )
 NOTIFY_CONFLICT = (
     "⚠️ سفارش {number}\n\n"
@@ -875,11 +1070,25 @@ NOTIFY_CONFLICT = (
     "سفارش در وضعیت «تداخل» متوقف است: چیزی ارسال نشد و واکنشی گذاشته نشد.\n\n"
     "از مسیر 🔎 جستجوی سفارش آن را حل کنید."
 )
-NOTIFY_STORE_FAILED = (
-    "⚠️ سفارش {number}\n\n"
-    "به‌روزرسانی وضعیت در فروشگاه ناموفق بود.\n\n"
+NOTIFY_STORE_RETRYING = (
+    "⏳ سفارش {number}\n\n"
+    "به‌روزرسانی وضعیت در فروشگاه انجام نشد (تلاش {attempt} از {max_attempts}).\n"
+    "ربات ساعت {next_attempt} دوباره تلاش می‌کند؛ کاری لازم نیست.\n\n"
     "شماره سفارش فروشگاه:\n{order_number}\n\n"
     "دلیل:\n{reason}"
+)
+NOTIFY_STORE_FAILED = (
+    "⚠️ سفارش {number}\n\n"
+    "به‌روزرسانی وضعیت در فروشگاه بعد از {attempts} تلاش ناموفق ماند و "
+    "تلاش خودکار دیگری انجام نمی‌شود.\n\n"
+    "شماره سفارش فروشگاه:\n{order_number}\n\n"
+    "دلیل:\n{reason}\n\n"
+    "از «🧾 محتوای نتیجه ← 🛒 صف فروشگاه» می‌توانید دوباره تلاش کنید."
+)
+NOTIFY_STORE_RECOVERED = (
+    "✅ سفارش {number}\n\n"
+    "وضعیت در فروشگاه سرانجام در تلاش {attempts} به‌روزرسانی شد.\n\n"
+    "شماره سفارش فروشگاه:\n{order_number}"
 )
 NOTIFY_ROUTE_FAILED = (
     "⚠️ سفارش {number}\n\nارسال به گروه کاری ناموفق بود.\n\nدلیل:\n{reason}"

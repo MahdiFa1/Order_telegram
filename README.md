@@ -114,7 +114,7 @@ app/
 ├── routing/                  # (route resolution lives in repositories)
 ├── rules/                    # signal extraction, matching, rule engine
 ├── acknowledgements/         # targeting + acknowledgement service
-├── dispatch/                 # result dispatch outbox
+├── dispatch/                 # result dispatch outbox, store outbox + retry worker
 ├── reports/                  # statistics
 ├── admin/                    # admin screen rendering
 ├── audit/                    # (audit repository lives in database/)
@@ -123,11 +123,11 @@ app/
 │   ├── models/               # SQLAlchemy models
 │   ├── repositories/         # data access
 │   └── engine.py             # async engine + session scope
-├── services/                 # finalizer, signals, notifications, bootstrap
+├── services/                 # finalizer, signals, notifications, retry worker
 ├── config/                   # settings
 └── utils/                    # enums, time, logging
 
-tests/                        # 161 tests against a real PostgreSQL
+tests/                        # 347 tests against a real PostgreSQL
 alembic/                      # migrations
 docker/entrypoint.sh          # wait for DB → migrate → exec app
 ```
@@ -252,6 +252,38 @@ group always is.
 - Optional appended text per status, editable from the panel — for example
   `✅سفارش با موفقیت انجام شد` for SUCCESS and `❌اطلاعات اشتباه بود.` for FAILED.
 
+### Telegram retries
+The result dispatch and the acknowledgement reaction run on the same retry
+structure as the store update, because they fail the same way: the order is
+already finished, so no further event would ever try again.
+
+| | transient | permanent |
+|---|---|---|
+| examples | network error, `5xx`, `Too Many Requests` | bot removed from the chat, topic closed, `REACTION_INVALID`, nothing to send |
+| immediately | the gateway's own bounded retry (`TELEGRAM_MAX_RETRIES`) | not retried |
+| afterwards | scheduled: 2, 4, 8, 16 … minutes, up to the attempt budget | left for an admin |
+| the admins | told once the budget is spent | told at once |
+
+- **The same background worker** drives all three queues every 30 seconds, in
+  pipeline order: dispatches first, then the acknowledgement of every order it
+  just touched (that is the only thing that can have opened its gate), then the
+  failed reactions whose own backoff expired, then the store.
+- **The ordering guarantee is untouched.** A reaction is still applied only
+  after Telegram confirms the result dispatch, so a reaction waiting on a
+  delivery is never on a clock of its own — it is re-checked when that delivery
+  is retried.
+- **Exactly once still holds**: a retry re-claims the outbox row, and the claim
+  itself carries the schedule and the budget, so neither a duplicate event nor
+  a second worker can double-send.
+- **A row left mid-flight** by a killed process is released after 20 minutes.
+- Editable from 📦 مقصد نتایج → 🔁 تلاش مجدد خودکار: on/off, dispatch attempt
+  budget (1–20), first delay (1–240 min), delay cap (1–1440 min) and the alert
+  mode. How many times the *reaction* is retried stays where it always was,
+  per status under 👍 واکنش تأیید; this screen only sets its delays.
+- 📦 مقصد نتایج → 📤 صف ارسال lists every result that has not gone through and
+  every reaction still owed, with a retry button each; the order screen shows
+  the same state and its 🔁 button forces all three legs at once.
+
 ### Source-channel reactions
 The person who posted in the source channel never sees the work group, so the
 bot reports progress back on the **original source message**:
@@ -277,13 +309,49 @@ bot reports progress back on the **original source message**:
 - The target status per result (`completed`, `cancelled`, …) and an optional
   order note are configured from the panel; the note supports `{order}`,
   `{number}` and `{status}`.
-- The store order is found by its number, with a fallback to the numeric id.
+- The store order is read by its numeric id first (a primary-key lookup) and
+  only searched for when a renumbering plugin makes the two differ.
 - Runs through the same outbox and claim-before-send pattern as result dispatch,
   so the store is updated **exactly once** per order even across a restart.
 - Skipped silently when disabled, when the order carries no store number, or when
   the order ends as `CONFLICT`.
-- A store failure is recorded and retried; it never changes the Telegram result.
+- A store failure never changes the Telegram result or the order's status.
 - The consumer secret is masked in the panel and never written to the audit log.
+
+### WooCommerce retries
+A store is a third party on the open internet: a timeout or a `502` says
+something about this second, not about the order. Failures are therefore split
+in two and treated oppositely.
+
+| | transient | permanent |
+|---|---|---|
+| examples | timeout, dropped connection, `429`, `500`–`504` | `401` bad keys, `404` unknown order, a status the store rejects |
+| immediately | retried on the spot (2s, 4s, …) | not retried |
+| afterwards | scheduled: 2, 4, 8, 16 … minutes, up to the attempt budget | left for an admin |
+| the admins | told once the budget is spent | told at once |
+
+- **Immediate retries** absorb most momentary failures before they ever become a
+  failed row — configurable, two by default.
+- **Scheduled retries** are driven by a background worker that inspects the queue
+  every 30 seconds; the delay itself lives on the row, so a restart never loses
+  or re-schedules it. Startup recovery runs the same pass.
+- **Exactly once still holds**: a retry re-claims the row, and the one call that
+  is not idempotent — adding an order note — checks the store's existing notes
+  before repeating itself.
+- **A call that dies mid-flight** (the process is killed between the claim and
+  the answer) is released after 20 minutes and retried.
+- **The first attempt runs inside the order pipeline**, so it is bounded by an
+  overall budget derived from the request timeout — a store that accepts the
+  connection and never answers cannot hang the handler.
+- **The admins get one alert per order**, when nothing is left to try, plus a
+  "it went through after all" message if a later attempt succeeds. Every failed
+  attempt can be announced instead, from the panel.
+- Everything above is editable from 🧾 محتوای نتیجه → 🔁 تلاش مجدد خودکار: on/off,
+  attempt budget (1–20), first delay (1–240 min), delay cap (1–1440 min), request
+  timeout (5–120 s), immediate retries (0–5) and the alert mode.
+- 🧾 محتوای نتیجه → 🛒 صف فروشگاه lists every store update that has not gone
+  through, with its attempt count, its next attempt and a retry button — and the
+  order screen carries the same button for a single order.
 
 ### Acknowledgement reactions
 - Configured independently for SUCCESS and FAILED (emoji, target, policy, retry).
@@ -291,6 +359,8 @@ bot reports progress back on the **original source message**:
 - Target modes: `SMART` (default), `TRIGGER_MESSAGE`, `ORDER_MESSAGE`.
 - Dispatch policies: `ALL_REQUIRED_DESTINATIONS` (default), `ANY_DESTINATION`, `PRIMARY_DESTINATION`.
 - Idempotent and restart-safe; a failed reaction never rolls back the order.
+- A refused reaction is retried on the schedule above, up to the per-status
+  budget; a reaction the chat forbids outright is never retried.
 - The bot's own reaction can never re-enter the rule engine.
 
 ### Operations
@@ -497,8 +567,9 @@ Send `/start` as a super admin. The panel is in Persian and offers:
 
 `🔁 واکنش کانال مبدأ` configures the source-message reaction stages and the
 "in progress" emojis; `🧾 محتوای نتیجه` configures the appended result text, the
-result content mode and the WooCommerce connection. The store order number lives
-under `⚙️ تنظیمات`.
+result content mode, the WooCommerce connection, how a failed store update is
+retried (`🔁 تلاش مجدد خودکار`) and the queue of store updates still outstanding
+(`🛒 صف فروشگاه`). The store order number lives under `⚙️ تنظیمات`.
 
 ### Recommended order
 
@@ -509,7 +580,8 @@ under `⚙️ تنظیمات`.
 4. **👤 Operators** — add the users allowed to close orders. Scope them to all
    groups or to specific ones.
 5. **📦 Result Destinations** — add the success and failure targets. Mark which are
-   *required* and pick a *primary*.
+   *required* and pick a *primary*. Its `🔁 تلاش مجدد خودکار` screen tunes what
+   happens when a send fails, and `📤 صف ارسال` shows what is still outstanding.
 6. **✅ Success Rules / ❌ Failure Rules** — enable the signals, set `ANY` or `ALL`,
    add text patterns and accepted detection reactions.
 7. **👍 واکنش تأیید** — enable the acknowledgement per status, choose the
@@ -518,7 +590,10 @@ under `⚙️ تنظیمات`.
    (received / in progress / success / failed) and the "in progress" emojis
    operators use in the work group.
 9. **🧾 محتوای نتیجه** — optional: the text appended per status, whether
-   operator attachments are forwarded, and the WooCommerce connection.
+   operator attachments are forwarded, and the WooCommerce connection. Its
+   `🔁 تلاش مجدد خودکار` screen tunes the retry of a failed store update; the
+   defaults (5 attempts over roughly half an hour, alert only at the end) suit
+   a normal store.
 10. **⚙️ تنظیمات** — optional: turn the store order number on, set its digit
     count, the rejection message and whether the refused post is deleted; and
     choose what happens to posts Telegram queued while the bot was down.
@@ -618,6 +693,25 @@ Set `SKIP_BACKUP=true` to skip the backup step.
 
 On Coolify, press *Redeploy*; migrations run from the entrypoint.
 
+### Updating a Coolify deployment
+
+1. **Point the resource at the code you want.** *Configuration* → *Source* →
+   *Branch*. Deploying a feature branch is a one-field change; merging it into
+   the branch Coolify already tracks needs nothing here.
+2. **Press *Redeploy*.** Coolify pulls the branch, rebuilds the image and
+   starts the container.
+3. **Watch the logs** (*Logs* → `bot`). A healthy update prints, in order:
+   `running database migrations`, `migrations complete`, `bot_started`, and
+   then `retry_worker_started`.
+4. **Nothing else is required.** New schema is applied by `alembic upgrade
+   head` from the entrypoint, every new option has a working default, and no
+   environment variable was added — the whole retry policy lives in the
+   database and is edited from the panel.
+5. **If the bot does not come up**, the migration is the first thing to check:
+   `alembic current` via *Execute Command* on the `bot` service should print
+   the newest revision. The database volume is never dropped by an update, so
+   restoring from `backup.sh` is always available.
+
 ---
 
 ## Tests
@@ -698,6 +792,35 @@ the acknowledgement is disabled for that status.
 Success and failure rules matched simultaneously. Resolve it in
 🔎 Find Order → *Mark Success* / *Mark Failed*, and narrow the rules so the two
 cannot both fire.
+
+**The result never arrived in the destination channel.**
+Open 🔎 Find Order → the order: each destination line now says what happens
+next. `FAILED` with a time means the bot will try again by itself;
+`متوقف شده` means Telegram refused in a way no retry can fix — almost always
+the bot not being an administrator in that chat, or a closed forum topic. Fix
+that, then press 🔁 on the order (or use 📦 مقصد نتایج → 📤 صف ارسال).
+
+**The result arrived but the operator's message has no reaction.**
+Same screen, the واکنش تأیید block. `PENDING` means the dispatch gate is not
+satisfied yet — fix the delivery first, and the reaction follows on its own.
+`FAILED` with `متوقف شده` usually means the chat does not allow that emoji;
+change it under 👍 واکنش تأیید and press 🔁 on the order.
+
+**The order says SUCCESS but the store still shows the old status.**
+Open 🔎 Find Order → the order and read its 🛒 فروشگاه section, or
+🧾 محتوای نتیجه → 🛒 صف فروشگاه for the whole queue. `FAILED` with a next
+attempt means the bot will try again by itself. `متوقف شده` means the store
+called the failure final — wrong consumer key (`401`), an order number that does
+not exist in the store (`404`), or a status slug WooCommerce rejects; fix that,
+then press the retry button. A store that is simply slow is better served by
+raising the request timeout in 🔁 تلاش مجدد خودکار than by retrying by hand.
+
+**A store update reports a timeout every time.**
+The default 30-second request timeout is generous for a healthy store, so a
+repeated timeout usually means the store itself is slow — an unindexed order
+search, an overloaded host, a firewall that drops the connection silently. Raise
+the timeout, and check that the bot's IP can reach `/wp-json/wc/v3/` at all with
+🧪 آزمایش اتصال.
 
 **Health check fails.**
 `curl http://127.0.0.1:8080/health` inside the container. `database: error` means
@@ -790,9 +913,13 @@ rather than being silently dropped.
 7. **Long polling only.** Webhooks would need a domain and TLS; the gateway and
    handler layers are unchanged by that switch.
 
-8. **Retries are bounded and in-process.** Failed dispatches and acknowledgements
-   are retried on the next pipeline run (manual retry from the panel, or startup
-   recovery). There is no background scheduler yet.
+8. **Retries are bounded and in-process.** One background worker retries the
+   result dispatch, the acknowledgement reaction and the store update on an
+   exponential backoff, and both policies are editable from the panel. The
+   worker runs inside the bot process: a second replica would double-tick, and
+   the claim-before-send pattern is what keeps that safe rather than a leader
+   election. Moving it to a queue worker is a drop-in change — the outbox is
+   already there.
 
 ### Future direction
 

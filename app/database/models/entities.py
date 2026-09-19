@@ -217,6 +217,18 @@ class Order(Base, IntPK, TimestampMixin):
     acknowledgement_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     acknowledgement_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     acknowledgement_error: Mapped[str | None] = mapped_column(Text)
+    #: The same three fields as a dispatch row, for the reaction that
+    #: follows it: when the next attempt is due, whether a repeat is
+    #: pointless, and whether the admins already heard about the failure.
+    acknowledgement_next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    acknowledgement_permanent: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    acknowledgement_alerted: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     #: Store order number parsed out of the source message's last line.
     source_order_number: Mapped[str | None] = mapped_column(String(32), index=True)
@@ -486,6 +498,19 @@ class ResultDispatch(Base, IntPK, TimestampMixin):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When the automatic retry may claim this row again. NULL means "now":
+    #: a row that has never been attempted is due immediately.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Set when Telegram's answer says a repeat cannot succeed (the bot was
+    #: removed from the chat, the topic is closed, the order has nothing to
+    #: send). Such a row is left to an admin instead of being retried.
+    permanent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Whether the admins were already told, so a schedule spanning an hour
+    #: does not alert them once per attempt.
+    alerted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     order: Mapped[Order] = relationship(back_populates="dispatches")
     destination: Mapped[ResultDestination] = relationship(lazy="selectin")
@@ -668,6 +693,19 @@ class WooCommerceCall(Base, IntPK, TimestampMixin):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When the automatic retry may claim this row again. NULL means "now":
+    #: a row that has never been attempted is due immediately.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Set when the store's answer says a repeat of the same call cannot
+    #: succeed (bad credentials, unknown order, rejected status). Such a row
+    #: is left to the admin instead of being retried on a schedule.
+    permanent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Whether the admins were already told about this failure, so a retry
+    #: schedule spanning an hour does not alert them once per attempt.
+    alerted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class RejectedMessage(Base, IntPK):

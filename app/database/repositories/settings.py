@@ -14,6 +14,7 @@ from app.database.repositories.base import BaseRepository
 from app.utils.enums import (
     CounterScope,
     ResultContentMode,
+    RetryAlertMode,
     SettingKey,
     StartupBacklogMode,
 )
@@ -33,6 +34,18 @@ DEFAULTS: dict[str, str] = {
     SettingKey.WOO_BASE_URL: "",
     SettingKey.WOO_CONSUMER_KEY: "",
     SettingKey.WOO_CONSUMER_SECRET: "",
+    SettingKey.WOO_RETRY_ENABLED: "true",
+    SettingKey.WOO_RETRY_MAX_ATTEMPTS: "5",
+    SettingKey.WOO_RETRY_BASE_MINUTES: "2",
+    SettingKey.WOO_RETRY_MAX_MINUTES: "60",
+    SettingKey.WOO_REQUEST_TIMEOUT: "30",
+    SettingKey.WOO_QUICK_RETRIES: "2",
+    SettingKey.WOO_ALERT_MODE: RetryAlertMode.EXHAUSTED,
+    SettingKey.TELEGRAM_RETRY_ENABLED: "true",
+    SettingKey.TELEGRAM_RETRY_MAX_ATTEMPTS: "5",
+    SettingKey.TELEGRAM_RETRY_BASE_MINUTES: "2",
+    SettingKey.TELEGRAM_RETRY_MAX_MINUTES: "60",
+    SettingKey.TELEGRAM_ALERT_MODE: RetryAlertMode.EXHAUSTED,
     SettingKey.STARTUP_BACKLOG_MODE: StartupBacklogMode.MAX_AGE,
     SettingKey.STARTUP_BACKLOG_MAX_AGE_MINUTES: "15",
 }
@@ -53,6 +66,19 @@ class SettingRepository(BaseRepository):
         if raw is None:
             return default
         return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    async def get_int(self, key: str, default: int, *, low: int, high: int) -> int:
+        """A stored number, clamped to the range the panel offers.
+
+        Settings are free text on the way in, so a value saved before the
+        bounds changed -- or an empty row -- must never take a background
+        worker out of service.
+        """
+        raw = await self.get(key)
+        try:
+            return max(low, min(high, int(str(raw).strip())))
+        except (TypeError, ValueError):
+            return default
 
     async def set(self, key: str, value: str) -> None:
         stmt = (

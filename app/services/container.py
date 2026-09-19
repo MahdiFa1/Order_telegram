@@ -15,6 +15,7 @@ from app.orders.service import OrderService
 from app.reports.service import ReportService
 from app.services.finalizer import OrderFinalizer
 from app.services.notifications import AdminNotifier
+from app.services.retry_worker import RetryWorker
 from app.services.signals import SignalService
 from app.services.source_reactions import SourceReactionService
 from app.telegram.gateway import TelegramGateway
@@ -34,6 +35,8 @@ class Services:
     reports: ReportService
     store: StoreDispatchService | None = None
     source_reactions: SourceReactionService | None = None
+    #: Retries whatever failed while nobody was looking.
+    retry_worker: RetryWorker | None = None
     bot_user_id: int | None = None
 
 
@@ -58,6 +61,7 @@ def build_services(
     )
     signals = SignalService(session_factory, finalizer)
     reports = ReportService(session_factory)
+    retry_worker = RetryWorker(finalizer)
     return Services(
         settings=settings,
         session_factory=session_factory,
@@ -71,4 +75,5 @@ def build_services(
         reports=reports,
         store=store,
         source_reactions=source_reactions,
+        retry_worker=retry_worker,
     )

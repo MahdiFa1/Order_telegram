@@ -197,10 +197,14 @@ class AuditEvent(StrEnum):
     RESULT_DISPATCH_ATTEMPTED = "RESULT_DISPATCH_ATTEMPTED"
     RESULT_DISPATCH_SUCCEEDED = "RESULT_DISPATCH_SUCCEEDED"
     RESULT_DISPATCH_FAILED = "RESULT_DISPATCH_FAILED"
+    RESULT_DISPATCH_RETRY_SCHEDULED = "RESULT_DISPATCH_RETRY_SCHEDULED"
+    RESULT_DISPATCH_GAVE_UP = "RESULT_DISPATCH_GAVE_UP"
     ACKNOWLEDGEMENT_ATTEMPTED = "ACKNOWLEDGEMENT_ATTEMPTED"
     ACKNOWLEDGEMENT_APPLIED = "ACKNOWLEDGEMENT_APPLIED"
     ACKNOWLEDGEMENT_FAILED = "ACKNOWLEDGEMENT_FAILED"
     ACKNOWLEDGEMENT_SKIPPED = "ACKNOWLEDGEMENT_SKIPPED"
+    ACKNOWLEDGEMENT_RETRY_SCHEDULED = "ACKNOWLEDGEMENT_RETRY_SCHEDULED"
+    ACKNOWLEDGEMENT_GAVE_UP = "ACKNOWLEDGEMENT_GAVE_UP"
     MANUAL_OVERRIDE = "MANUAL_OVERRIDE"
     RULE_CHANGED = "RULE_CHANGED"
     REACTION_CONFIGURATION_CHANGED = "REACTION_CONFIGURATION_CHANGED"
@@ -213,6 +217,8 @@ class AuditEvent(StrEnum):
     ORDER_IN_PROGRESS = "ORDER_IN_PROGRESS"
     WOOCOMMERCE_UPDATED = "WOOCOMMERCE_UPDATED"
     WOOCOMMERCE_FAILED = "WOOCOMMERCE_FAILED"
+    WOOCOMMERCE_RETRY_SCHEDULED = "WOOCOMMERCE_RETRY_SCHEDULED"
+    WOOCOMMERCE_GAVE_UP = "WOOCOMMERCE_GAVE_UP"
 
 
 class SourceReactionStage(StrEnum):
@@ -255,6 +261,32 @@ class StartupBacklogMode(StrEnum):
     MAX_AGE = "MAX_AGE"
 
 
+class RetryAlertMode(StrEnum):
+    """When a failure that will be retried is reported to the admins.
+
+    A momentary failure that the next automatic attempt repairs is noise, so
+    the default waits until the retry budget is spent before alerting. Both
+    the store update and the Telegram result dispatch read this.
+    """
+
+    #: Alert on every failed attempt, including ones that will be retried.
+    EVERY_ATTEMPT = "EVERY_ATTEMPT"
+    #: Alert only once no further automatic attempt will be made.
+    EXHAUSTED = "EXHAUSTED"
+
+
+class StoreCallOutcome(StrEnum):
+    """Why a store call stopped, which decides whether it is retried."""
+
+    #: The store answered; nothing left to do.
+    OK = "OK"
+    #: A timeout, a network error or a 5xx: worth trying again later.
+    TRANSIENT = "TRANSIENT"
+    #: Wrong credentials, an unknown order, a rejected status: retrying
+    #: the identical call can only fail identically.
+    PERMANENT = "PERMANENT"
+
+
 class ResultContentMode(StrEnum):
     """What the result destination receives."""
 
@@ -276,6 +308,20 @@ class SettingKey(StrEnum):
     WOO_BASE_URL = "woo_base_url"
     WOO_CONSUMER_KEY = "woo_consumer_key"
     WOO_CONSUMER_SECRET = "woo_consumer_secret"
+    # --- how a failed store update is retried ---
+    WOO_RETRY_ENABLED = "woo_retry_enabled"
+    WOO_RETRY_MAX_ATTEMPTS = "woo_retry_max_attempts"
+    WOO_RETRY_BASE_MINUTES = "woo_retry_base_minutes"
+    WOO_RETRY_MAX_MINUTES = "woo_retry_max_minutes"
+    WOO_REQUEST_TIMEOUT = "woo_request_timeout"
+    WOO_QUICK_RETRIES = "woo_quick_retries"
+    WOO_ALERT_MODE = "woo_alert_mode"
+    # --- how a failed Telegram dispatch or acknowledgement is retried ---
+    TELEGRAM_RETRY_ENABLED = "telegram_retry_enabled"
+    TELEGRAM_RETRY_MAX_ATTEMPTS = "telegram_retry_max_attempts"
+    TELEGRAM_RETRY_BASE_MINUTES = "telegram_retry_base_minutes"
+    TELEGRAM_RETRY_MAX_MINUTES = "telegram_retry_max_minutes"
+    TELEGRAM_ALERT_MODE = "telegram_alert_mode"
     # --- result content ---
     RESULT_CONTENT_MODE = "result_content_mode"
 

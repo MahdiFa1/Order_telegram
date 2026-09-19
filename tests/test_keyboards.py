@@ -29,6 +29,7 @@ from app.bot.keyboards.callbacks import (
 )
 from app.database.models import (
     AcknowledgementConfig,
+    WooCommerceCall,
     ProgressReaction,
     ResultConfig,
     SourceReactionConfig,
@@ -44,8 +45,11 @@ from app.database.models import (
     StatusRule,
     WorkGroup,
 )
+from app.dispatch.policy import StoreRetryPolicy, TelegramRetryPolicy
 from app.utils.enums import (
     AcknowledgementTargetMode,
+    DispatchStatus,
+    RetryAlertMode,
     SourceReactionStage,
     AdminRole,
     DispatchPolicy,
@@ -158,6 +162,23 @@ def a_result_config() -> ResultConfig:
 
 def an_order() -> Order:
     return Order(id=8, status=OrderStatus.PENDING, display_number="order8")
+
+
+def a_store_call(**fields) -> WooCommerceCall:
+    values = {
+        "id": 3,
+        "order_id": 8,
+        "order_status": OrderStatus.SUCCESS,
+        "store_order_number": "2795541",
+        "target_status": "completed",
+        "status": DispatchStatus.FAILED,
+        "attempts": 2,
+        "error": "no answer from the store within 30s",
+        "permanent": False,
+        "alerted": False,
+    }
+    values.update(fields)
+    return WooCommerceCall(**values)
 
 
 REQUIRED_SECTIONS = (
@@ -277,6 +298,24 @@ async def test_main_menu_is_labelled_in_persian():
         lambda: kb.append_text_detail(OrderStatus.SUCCESS, a_result_config()),
         lambda: kb.woo_detail(OrderStatus.FAILED, a_result_config()),
         lambda: kb.woo_store_detail(),
+        lambda: kb.woo_retry_detail(StoreRetryPolicy()),
+        lambda: kb.woo_retry_detail(
+            StoreRetryPolicy(enabled=False, alert_mode=RetryAlertMode.EVERY_ATTEMPT)
+        ),
+        lambda: kb.woo_alert_mode_picker(),
+        lambda: kb.woo_queue([], {}),
+        lambda: kb.telegram_retry_detail(TelegramRetryPolicy()),
+        lambda: kb.telegram_retry_detail(
+            TelegramRetryPolicy(enabled=False, alert_mode=RetryAlertMode.EVERY_ATTEMPT)
+        ),
+        lambda: kb.telegram_alert_mode_picker(),
+        lambda: kb.delivery_queue([], {}),
+        lambda: kb.delivery_queue([8, 9], {8: "order8"}),
+        lambda: kb.woo_queue([a_store_call()], {8: "order8"}),
+        lambda: kb.order_actions(an_order(), a_store_call()),
+        lambda: kb.order_actions(
+            an_order(), a_store_call(status=DispatchStatus.SENT)
+        ),
         lambda: kb.order_number_detail(True, True, 7),
         lambda: kb.order_number_detail(False, False, 12),
     ],

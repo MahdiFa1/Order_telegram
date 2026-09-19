@@ -29,7 +29,9 @@ from app.database.repositories import (
     AuditRepository,
     OrderRepository,
     SourceChannelRepository,
+    WooCommerceRepository,
 )
+from app.dispatch.policy import load_store_policy, load_telegram_policy
 from app.services.container import Services
 from app.utils.enums import OrderStatus
 from app.utils.time import business_date, format_local
@@ -140,8 +142,19 @@ async def _order_screen(order_id: int) -> tuple[str, object]:
             source = channel.title if channel else None
         signals = await OrderRepository(session).list_signals(order_id)
         dispatches = await AcknowledgementRepository(session).list_dispatches(order_id)
-        detail = texts.order_detail(order, source, signals, dispatches)
-        return truncate(detail), order_actions(order)
+        store_call = await WooCommerceRepository(session).get_call(order_id)
+        store_policy = await load_store_policy(session)
+        telegram_policy = await load_telegram_policy(session)
+        detail = texts.order_detail(
+            order,
+            source,
+            signals,
+            dispatches,
+            store_call,
+            store_policy.max_attempts,
+            telegram_policy.max_attempts,
+        )
+        return truncate(detail), order_actions(order, store_call)
 
 
 @router.callback_query(OrderCB.filter(F.action == "view"), IsAdmin())
@@ -202,8 +215,36 @@ async def _apply_override(
 
 @router.callback_query(OrderCB.filter(F.action == "retry"), IsAdmin())
 async def retry_pipeline(callback: CallbackQuery, callback_data: OrderCB, services: Services) -> None:
-    await services.finalizer.run_pipeline(callback_data.id)
+    """Try the whole pipeline again now, whatever each leg's backoff says.
+
+    An admin presses this after fixing something -- re-adding the bot to a
+    channel, allowing the emoji -- so every schedule starts over.
+    """
+    await callback.answer()
+    await services.finalizer.run_pipeline(callback_data.id, force=True)
     text, markup = await _order_screen(callback_data.id)
+    await render(callback, text, markup)
+
+
+@router.callback_query(OrderCB.filter(F.action == "woo_retry"), IsAdmin())
+async def retry_store(
+    callback: CallbackQuery, callback_data: OrderCB, services: Services
+) -> None:
+    """Try the store again now, whatever the backoff or the last verdict said.
+
+    An admin presses this after fixing something -- the keys, the order in
+    the store -- so the schedule and the "permanent" mark start over.
+    """
+    if services.store is None:
+        await callback.answer()
+        return
+    await callback.answer()
+    outcome = await services.store.retry_now(callback_data.id)
+    text, markup = await _order_screen(callback_data.id)
+    if not outcome.ok and outcome.attempted:
+        text = truncate(text, limit=3500) + "\n\n" + t.WOO_QUEUE_RETRY_FAILED.format(
+            reason=outcome.reason[:200]
+        )
     await render(callback, text, markup)
 
 

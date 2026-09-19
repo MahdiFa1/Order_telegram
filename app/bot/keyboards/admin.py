@@ -22,7 +22,7 @@ from app.bot.keyboards.callbacks import (
 )
 from app.admin import strings as t
 from app.bot.keyboards.common import back_button, toggle_icon
-from app.utils.enums import OrderStatus, SignalKey
+from app.utils.enums import DispatchStatus, OrderStatus, SignalKey
 
 MAIN_MENU: list[tuple[str, str]] = t.MENU_ITEMS
 
@@ -177,6 +177,14 @@ def destinations_menu() -> InlineKeyboardMarkup:
             text=t.BTN_FAILURE_DESTINATIONS,
             callback_data=ChatCB(kind="dest", action="list", arg=OrderStatus.FAILED).pack(),
         )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_TG_RETRY, callback_data=ResultCB(action="tg_cfg").pack()
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_TG_QUEUE, callback_data=ResultCB(action="tg_queue").pack()
+        ),
     )
     builder.row(back_button("main"))
     return builder.as_markup()
@@ -531,7 +539,7 @@ def report_result_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def order_actions(order) -> InlineKeyboardMarkup:
+def order_actions(order, store_call=None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -553,6 +561,14 @@ def order_actions(order) -> InlineKeyboardMarkup:
             callback_data=OrderCB(action="retry", id=order.id).pack(),
         ),
     )
+    if store_call is not None and store_call.status != DispatchStatus.SENT:
+        # Only worth offering while the store still disagrees with the bot.
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_WOO_RETRY_ORDER,
+                callback_data=OrderCB(action="woo_retry", id=order.id).pack(),
+            )
+        )
     builder.row(
         InlineKeyboardButton(
             text=t.BTN_ORDER_AUDIT,
@@ -824,6 +840,14 @@ def result_content_menu(mode: str) -> InlineKeyboardMarkup:
             text=t.BTN_WOO_STORE, callback_data=ResultCB(action="store").pack()
         )
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_WOO_RETRY, callback_data=ResultCB(action="retry_cfg").pack()
+        ),
+        InlineKeyboardButton(
+            text=t.BTN_WOO_QUEUE, callback_data=ResultCB(action="queue").pack()
+        ),
+    )
     builder.row(back_button("main"))
     return builder.as_markup()
 
@@ -906,6 +930,154 @@ def woo_store_detail() -> InlineKeyboardMarkup:
         )
     )
     builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def woo_retry_detail(policy) -> InlineKeyboardMarkup:
+    """Every knob of the automatic retry, one per row."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(policy.enabled),
+            callback_data=ResultCB(action="retry_toggle").pack(),
+        )
+    )
+    for label, field, value in (
+        (t.BTN_WOO_RETRY_MAX, "max", policy.max_attempts),
+        (t.BTN_RETRY_BASE, "base", policy.base_minutes),
+        (t.BTN_RETRY_CAP, "cap", policy.max_minutes),
+        (t.BTN_WOO_TIMEOUT, "timeout", policy.request_timeout),
+        (t.BTN_WOO_QUICK, "quick", policy.quick_retries),
+    ):
+        builder.row(
+            InlineKeyboardButton(
+                text=label.format(value=t.fa_digits(value)),
+                callback_data=ResultCB(action="retry_set", arg=field).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_RETRY_ALERT.format(
+                value=t.ALERT_MODE_NAMES.get(
+                    policy.alert_mode.value, policy.alert_mode.value
+                )
+            ),
+            callback_data=ResultCB(action="alert_mode").pack(),
+        )
+    )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def woo_alert_mode_picker() -> InlineKeyboardMarkup:
+    from app.utils.enums import RetryAlertMode
+
+    builder = InlineKeyboardBuilder()
+    for mode in RetryAlertMode:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.ALERT_MODE_NAMES.get(mode.value, mode.value),
+                callback_data=ResultCB(action="set_alert", arg=mode.value).pack(),
+            )
+        )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def woo_queue(calls, display_numbers: dict[int, str]) -> InlineKeyboardMarkup:
+    """One retry button per unfinished store update, newest first."""
+    builder = InlineKeyboardBuilder()
+    for call in calls[:10]:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_WOO_QUEUE_RETRY.format(
+                    display=display_numbers.get(call.order_id, call.store_order_number)
+                ),
+                callback_data=ResultCB(
+                    action="q_retry", arg=str(call.order_id)
+                ).pack(),
+            )
+        )
+    if calls:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_WOO_QUEUE_RETRY_ALL,
+                callback_data=ResultCB(action="q_all").pack(),
+            )
+        )
+    builder.row(back_button("result_content"))
+    return builder.as_markup()
+
+
+def telegram_retry_detail(policy) -> InlineKeyboardMarkup:
+    """The knobs of the Telegram retry: dispatch budget, delays, alerting."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=t.toggle_button(policy.enabled),
+            callback_data=ResultCB(action="tg_toggle").pack(),
+        )
+    )
+    for label, field, value in (
+        (t.BTN_TG_RETRY_MAX, "max", policy.max_attempts),
+        (t.BTN_RETRY_BASE, "base", policy.base_minutes),
+        (t.BTN_RETRY_CAP, "cap", policy.max_minutes),
+    ):
+        builder.row(
+            InlineKeyboardButton(
+                text=label.format(value=t.fa_digits(value)),
+                callback_data=ResultCB(action="tg_set", arg=field).pack(),
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text=t.BTN_RETRY_ALERT.format(
+                value=t.ALERT_MODE_NAMES.get(
+                    policy.alert_mode.value, policy.alert_mode.value
+                )
+            ),
+            callback_data=ResultCB(action="tg_alert").pack(),
+        )
+    )
+    builder.row(back_button("destinations"))
+    return builder.as_markup()
+
+
+def telegram_alert_mode_picker() -> InlineKeyboardMarkup:
+    from app.utils.enums import RetryAlertMode
+
+    builder = InlineKeyboardBuilder()
+    for mode in RetryAlertMode:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.ALERT_MODE_NAMES.get(mode.value, mode.value),
+                callback_data=ResultCB(action="tg_set_alert", arg=mode.value).pack(),
+            )
+        )
+    builder.row(back_button("destinations"))
+    return builder.as_markup()
+
+
+def delivery_queue(order_ids: list[int], display_numbers: dict[int, str]) -> InlineKeyboardMarkup:
+    """One retry button per order with unfinished Telegram work."""
+    builder = InlineKeyboardBuilder()
+    for order_id in order_ids[:10]:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_TG_QUEUE_RETRY.format(
+                    display=display_numbers.get(order_id, str(order_id))
+                ),
+                callback_data=ResultCB(action="tg_q_retry", arg=str(order_id)).pack(),
+            )
+        )
+    if order_ids:
+        builder.row(
+            InlineKeyboardButton(
+                text=t.BTN_TG_QUEUE_RETRY_ALL,
+                callback_data=ResultCB(action="tg_q_all").pack(),
+            )
+        )
+    builder.row(back_button("destinations"))
     return builder.as_markup()
 
 

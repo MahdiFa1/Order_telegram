@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import (
@@ -164,7 +164,13 @@ class ResultConfigRepository(BaseRepository):
 
 
 class WooCommerceRepository(BaseRepository):
-    """Outbox for the store update, so it runs exactly once per order."""
+    """Outbox for the store update, so it runs exactly once per order.
+
+    The row also carries the retry schedule: ``next_attempt_at`` is when the
+    background worker may claim it again, ``permanent`` marks a failure no
+    retry can fix, and ``alerted`` remembers that the admins already heard
+    about it.
+    """
 
     async def ensure_call(
         self,
@@ -194,15 +200,43 @@ class WooCommerceRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def claim(self, order_id: int) -> WooCommerceCall | None:
-        """PENDING/FAILED -> SENDING, so only one worker calls the store."""
+    async def claim(
+        self,
+        order_id: int,
+        *,
+        due_at: datetime | None = None,
+        max_attempts: int | None = None,
+    ) -> WooCommerceCall | None:
+        """PENDING/FAILED -> SENDING, so only one worker calls the store.
+
+        ``due_at`` makes the claim respect the retry schedule: the scheduled
+        worker and the order pipeline pass the current time together with the
+        attempt budget, so a row waiting out its backoff -- or one that has
+        spent its budget -- is left alone. An admin pressing "try again"
+        passes neither and claims the row immediately.
+        """
+        conditions = [
+            WooCommerceCall.order_id == order_id,
+            WooCommerceCall.status.in_([DispatchStatus.PENDING, DispatchStatus.FAILED]),
+        ]
+        if due_at is not None:
+            conditions.append(WooCommerceCall.permanent.is_(False))
+            conditions.append(
+                or_(
+                    WooCommerceCall.next_attempt_at.is_(None),
+                    WooCommerceCall.next_attempt_at <= due_at,
+                )
+            )
+        if max_attempts is not None:
+            conditions.append(WooCommerceCall.attempts < max_attempts)
         result = await self.session.execute(
             update(WooCommerceCall)
-            .where(
-                WooCommerceCall.order_id == order_id,
-                WooCommerceCall.status.in_([DispatchStatus.PENDING, DispatchStatus.FAILED]),
+            .where(*conditions)
+            .values(
+                status=DispatchStatus.SENDING,
+                attempts=WooCommerceCall.attempts + 1,
+                last_attempt_at=utcnow(),
             )
-            .values(status=DispatchStatus.SENDING, attempts=WooCommerceCall.attempts + 1)
             .returning(WooCommerceCall.id)
         )
         if result.scalar_one_or_none() is None:
@@ -213,24 +247,128 @@ class WooCommerceRepository(BaseRepository):
         await self.session.execute(
             update(WooCommerceCall)
             .where(WooCommerceCall.order_id == order_id)
-            .values(status=DispatchStatus.SENT, sent_at=utcnow(), error=None)
+            .values(
+                status=DispatchStatus.SENT,
+                sent_at=utcnow(),
+                error=None,
+                next_attempt_at=None,
+                permanent=False,
+                # The alert this row may have raised is now answered.
+                alerted=False,
+            )
         )
 
-    async def mark_failed(self, order_id: int, error: str) -> None:
+    async def mark_failed(
+        self,
+        order_id: int,
+        error: str,
+        *,
+        permanent: bool = False,
+        next_attempt_at: datetime | None = None,
+        alerted: bool | None = None,
+    ) -> None:
+        values: dict = {
+            "status": DispatchStatus.FAILED,
+            "error": error[:1000],
+            "permanent": permanent,
+            "next_attempt_at": next_attempt_at,
+        }
+        if alerted is not None:
+            values["alerted"] = alerted
         await self.session.execute(
             update(WooCommerceCall)
             .where(WooCommerceCall.order_id == order_id)
-            .values(status=DispatchStatus.FAILED, error=error[:1000])
+            .values(**values)
         )
 
+    async def reschedule(self, order_id: int) -> WooCommerceCall | None:
+        """An admin asked for another try: clear the brakes, keep history.
+
+        ``alerted`` is deliberately kept: the admins were told this order was
+        stuck, so they are owed the "it went through" message that only a
+        still-alerted row produces.
+        """
+        await self.session.execute(
+            update(WooCommerceCall)
+            .where(
+                WooCommerceCall.order_id == order_id,
+                WooCommerceCall.status != DispatchStatus.SENT,
+            )
+            .values(
+                status=DispatchStatus.PENDING,
+                attempts=0,
+                permanent=False,
+                next_attempt_at=None,
+            )
+        )
+        return await self.get_call(order_id)
+
+    def _retryable(self, max_attempts: int):
+        return (
+            WooCommerceCall.status.in_(
+                [DispatchStatus.PENDING, DispatchStatus.FAILED]
+            ),
+            WooCommerceCall.permanent.is_(False),
+            WooCommerceCall.attempts < max_attempts,
+        )
+
+    async def due_calls(
+        self, *, now: datetime, max_attempts: int, limit: int = 50
+    ) -> list[WooCommerceCall]:
+        """Every call the worker may attempt right now, oldest first."""
+        result = await self.session.execute(
+            select(WooCommerceCall)
+            .where(
+                *self._retryable(max_attempts),
+                or_(
+                    WooCommerceCall.next_attempt_at.is_(None),
+                    WooCommerceCall.next_attempt_at <= now,
+                ),
+            )
+            .order_by(WooCommerceCall.id)
+            .limit(limit)
+        )
+        return list(result.scalars())
+
+    async def list_unfinished(self, limit: int = 20) -> list[WooCommerceCall]:
+        """Newest first: what the store queue screen shows an admin."""
+        result = await self.session.execute(
+            select(WooCommerceCall)
+            .where(WooCommerceCall.status != DispatchStatus.SENT)
+            .order_by(WooCommerceCall.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars())
+
+    async def counts(self, max_attempts: int) -> tuple[int, int]:
+        """(still to be retried, given up on)."""
+        waiting = await self.session.execute(
+            select(func.count())
+            .select_from(WooCommerceCall)
+            .where(*self._retryable(max_attempts))
+        )
+        abandoned = await self.session.execute(
+            select(func.count())
+            .select_from(WooCommerceCall)
+            .where(
+                WooCommerceCall.status == DispatchStatus.FAILED,
+                or_(
+                    WooCommerceCall.permanent.is_(True),
+                    WooCommerceCall.attempts >= max_attempts,
+                ),
+            )
+        )
+        return int(waiting.scalar_one()), int(abandoned.scalar_one())
+
     async def release_stale(self, older_than: datetime) -> int:
+        """A row left SENDING by a crash is due again immediately."""
         result = await self.session.execute(
             update(WooCommerceCall)
             .where(
                 WooCommerceCall.status == DispatchStatus.SENDING,
                 WooCommerceCall.updated_at < older_than,
             )
-            .values(status=DispatchStatus.PENDING)
+            .values(status=DispatchStatus.PENDING, next_attempt_at=None)
         )
         return int(result.rowcount or 0)
 
