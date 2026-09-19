@@ -512,6 +512,7 @@ async def test_a_successful_order_updates_the_store(destinations):
             "status": "completed",
             "note": None,
             "base_url": "https://shop.example",
+            "repeat_attempt": False,
         }
     ]
     async with session_scope() as session:
@@ -564,7 +565,8 @@ async def test_the_store_is_updated_exactly_once(destinations):
 async def test_a_store_failure_never_changes_the_order(destinations):
     services = destinations
     client = await _configure_store(OrderStatus.SUCCESS, "completed")
-    client.fail_with = "HTTP 404: order not found"
+    client.fail_with = "order 1234567 not found in the store"
+    client.fail_permanently = True
     await _require_order_number()
     await configure_acknowledgement(OrderStatus.SUCCESS, enabled=False)
 
@@ -578,6 +580,8 @@ async def test_a_store_failure_never_changes_the_order(destinations):
     async with session_scope() as session:
         call = await WooCommerceRepository(session).get_call(order_id)
     assert call.status == DispatchStatus.FAILED
+    # Nothing a retry could fix, so the admins hear about it straight away.
+    assert call.permanent is True
     assert "store_update_failed" in services.notifier.kinds()
 
 

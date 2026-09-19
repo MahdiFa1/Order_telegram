@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from app.admin import strings as t
 from app.reports.service import OperatorReport, OrderReport, SystemStatus
-from app.utils.enums import OrderStatus, RuleMode, SignalKey
-from app.utils.time import format_duration, format_local
+from app.utils.enums import DispatchStatus, OrderStatus, RuleMode, SignalKey
+from app.utils.time import format_duration, format_local, utcnow
 
 MAIN_TEXT = t.MAIN_TEXT
 
@@ -54,6 +54,8 @@ def system_status(status: SystemStatus, uptime_seconds: float, bot_online: bool)
         conflict=_fa(status.conflict_orders),
         failed_dispatches=_fa(status.failed_dispatches),
         failed_acks=_fa(status.failed_acknowledgements),
+        store_waiting=_fa(status.store_updates_waiting),
+        store_abandoned=_fa(status.store_updates_abandoned),
         uptime=_duration(uptime_seconds),
     )
 
@@ -136,7 +138,96 @@ def acknowledgement_screen(status: OrderStatus, config, warnings: list[str]) -> 
     return body
 
 
-def order_detail(order, source_title: str | None, signals, dispatches) -> str:
+def store_retry_screen(policy) -> str:
+    """The automatic-retry settings, with the resulting schedule spelled out."""
+    steps = [
+        int(policy.delay_after(attempt).total_seconds() // 60)
+        for attempt in range(1, policy.max_attempts)
+    ]
+    schedule = (
+        "، ".join(_fa(step) for step in steps) + " " + t.MINUTES_SUFFIX
+        if steps
+        else t.DASH
+    )
+    text = t.WOO_RETRY_SCREEN.format(
+        enabled=t.toggle_text(policy.enabled),
+        max_attempts=_fa(policy.max_attempts),
+        base_minutes=_fa(policy.base_minutes),
+        max_minutes=_fa(policy.max_minutes),
+        schedule=schedule,
+        timeout=_fa(policy.request_timeout),
+        quick=_fa(policy.quick_retries),
+        alert=t.WOO_ALERT_MODE_NAMES.get(
+            policy.alert_mode.value, policy.alert_mode.value
+        ),
+    )
+    if not policy.enabled:
+        text += f"\n\n{t.WOO_RETRY_DISABLED_HINT}"
+    return text
+
+
+def store_schedule(
+    call, now, fmt: str = "%H:%M", max_attempts: int | None = None
+) -> str:
+    """One line saying what happens to this store call next."""
+    if call.status == DispatchStatus.SENT:
+        return t.DASH
+    if call.status == DispatchStatus.SENDING:
+        return t.WOO_QUEUE_IN_FLIGHT
+    spent = max_attempts is not None and call.attempts >= max_attempts
+    if call.permanent or spent:
+        return t.WOO_QUEUE_STOPPED
+    if call.next_attempt_at is None or call.next_attempt_at <= now:
+        return t.WOO_QUEUE_SOON
+    return t.WOO_QUEUE_WAITING.format(
+        time=_fa(format_local(call.next_attempt_at, fmt))
+    )
+
+
+def store_queue_screen(
+    calls, display_numbers: dict[int, str], waiting: int, abandoned: int,
+    max_attempts: int, now,
+) -> str:
+    """The list of store updates that have not gone through yet."""
+    rows = [
+        t.WOO_QUEUE_ROW.format(
+            icon="⏳" if not call.permanent and call.attempts < max_attempts else "⛔️",
+            display=display_numbers.get(call.order_id, t.DASH),
+            order_number=_fa(call.store_order_number),
+            attempts=_fa(call.attempts),
+            schedule=store_schedule(call, now, max_attempts=max_attempts),
+            error=(call.error or t.DASH)[:200],
+        )
+        for call in calls
+    ]
+    return t.WOO_QUEUE_SCREEN.format(
+        waiting=_fa(waiting),
+        abandoned=_fa(abandoned),
+        rows="\n\n".join(rows) if rows else t.WOO_QUEUE_EMPTY,
+    )
+
+
+def store_section(call, max_attempts: int | None = None) -> str:
+    """The store update's own state, as it reads on the order screen."""
+    if call is None:
+        return ""
+    return t.ORDER_STORE_SECTION.format(
+        order_number=_fa(call.store_order_number),
+        status=call.status,
+        attempts=_fa(call.attempts),
+        schedule=store_schedule(call, utcnow(), "%Y-%m-%d %H:%M", max_attempts),
+        error=(call.error or t.DASH)[:200],
+    )
+
+
+def order_detail(
+    order,
+    source_title: str | None,
+    signals,
+    dispatches,
+    store_call=None,
+    store_max_attempts: int | None = None,
+) -> str:
     signal_lines = (
         "\n".join(
             f"  • {t.status_name(s.rule_status)}: "
@@ -200,4 +291,4 @@ def order_detail(order, source_title: str | None, signals, dispatches) -> str:
         ack_error=order.acknowledgement_error or t.DASH,
         deliveries=delivery_lines,
         signals=signal_lines,
-    )
+    ) + store_section(store_call, store_max_attempts)

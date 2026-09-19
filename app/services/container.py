@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.acknowledgements.service import AcknowledgementService
 from app.config import Settings
+from app.dispatch.retry_worker import StoreRetryWorker
 from app.dispatch.service import DispatchService
 from app.dispatch.store import StoreDispatchService
 from app.orders.service import OrderService
@@ -34,6 +35,8 @@ class Services:
     reports: ReportService
     store: StoreDispatchService | None = None
     source_reactions: SourceReactionService | None = None
+    #: Retries store updates that failed while nobody was looking.
+    store_retry: StoreRetryWorker | None = None
     bot_user_id: int | None = None
 
 
@@ -58,6 +61,7 @@ def build_services(
     )
     signals = SignalService(session_factory, finalizer)
     reports = ReportService(session_factory)
+    store_retry = StoreRetryWorker(store)
     return Services(
         settings=settings,
         session_factory=session_factory,
@@ -71,4 +75,5 @@ def build_services(
         reports=reports,
         store=store,
         source_reactions=source_reactions,
+        store_retry=store_retry,
     )

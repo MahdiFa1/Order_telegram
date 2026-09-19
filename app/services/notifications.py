@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.admin import strings as t
@@ -19,7 +21,7 @@ from app.database.repositories import (
 )
 from app.telegram.gateway import TelegramGateway
 from app.utils.enums import OrderStatus, SettingKey
-from app.utils.time import local_now
+from app.utils.time import format_local, local_now
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -68,7 +70,7 @@ class AdminNotifier:
     async def dispatch_failed(self, order_id: int, chat_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            f"dispatch_failed:{chat_id}",
+            f"dispatch_failed:{order_id}:{chat_id}",
             t.NOTIFY_DISPATCH_FAILED.format(
                 number=number, chat_id=chat_id, reason=reason
             ),
@@ -77,7 +79,7 @@ class AdminNotifier:
     async def acknowledgement_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            "acknowledgement_failed",
+            f"acknowledgement_failed:{order_id}",
             t.NOTIFY_ACK_FAILED.format(number=number, reason=reason),
         )
 
@@ -171,18 +173,61 @@ class AdminNotifier:
                 )
 
     async def store_update_failed(
-        self, order_id: int, order_number: str, reason: str
+        self,
+        order_id: int,
+        order_number: str,
+        reason: str,
+        *,
+        next_attempt: datetime | None = None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
     ) -> None:
+        """Report a failed store update.
+
+        A failure that will be tried again reads differently from one that
+        needs a human: the first says when the bot will try next, the second
+        says what the admin has to do. The throttle key carries the order and
+        the attempt so one order's alert never swallows another's.
+        """
+        number = await self._display_number(order_id)
+        fa = t.fa_digits
+        if final:
+            key = f"store_update_failed:{order_id}"
+            text = t.NOTIFY_STORE_FAILED.format(
+                number=number,
+                order_number=order_number,
+                reason=reason,
+                attempts=fa(attempts),
+            )
+        else:
+            key = f"store_update_failed:{order_id}:{attempts}"
+            text = t.NOTIFY_STORE_RETRYING.format(
+                number=number,
+                order_number=order_number,
+                reason=reason,
+                attempt=fa(attempts),
+                max_attempts=fa(max_attempts),
+                next_attempt=fa(format_local(next_attempt, "%H:%M")),
+            )
+        await self._send(key, text)
+
+    async def store_update_recovered(
+        self, order_id: int, order_number: str, attempts: int
+    ) -> None:
+        """Close the loop on an order the admins were warned about."""
         number = await self._display_number(order_id)
         await self._send(
-            "store_update_failed",
-            t.NOTIFY_STORE_FAILED.format(
-                number=number, order_number=order_number, reason=reason
+            f"store_update_recovered:{order_id}",
+            t.NOTIFY_STORE_RECOVERED.format(
+                number=number,
+                order_number=order_number,
+                attempts=t.fa_digits(attempts),
             ),
         )
 
     async def route_failed(self, order_id: int, reason: str) -> None:
         number = await self._display_number(order_id)
         await self._send(
-            "route_failed", t.NOTIFY_ROUTE_FAILED.format(number=number, reason=reason)
+            f"route_failed:{order_id}", t.NOTIFY_ROUTE_FAILED.format(number=number, reason=reason)
         )

@@ -320,7 +320,12 @@ class OrderFinalizer:
         from app.utils.time import utcnow
 
         cutoff = utcnow() - timedelta(minutes=2)
-        counters = {"dispatches_released": 0, "acks_released": 0, "orders_resumed": 0}
+        counters = {
+            "dispatches_released": 0,
+            "acks_released": 0,
+            "orders_resumed": 0,
+            "store_calls_retried": 0,
+        }
 
         async with session_scope() as session:
             acks = AcknowledgementRepository(session)
@@ -336,6 +341,14 @@ class OrderFinalizer:
                 counters["orders_resumed"] += 1
             except Exception:  # noqa: BLE001 - recovery must not abort startup
                 logger.exception("recovery_failed", order_id=order_id)
+
+        # A store update interrupted or failed before the restart has no
+        # event of its own to wake it: recovery is its first retry.
+        if self.store is not None:
+            try:
+                counters["store_calls_retried"] = await self.store.retry_due()
+            except Exception:  # noqa: BLE001 - recovery must not abort startup
+                logger.exception("store_recovery_failed")
 
         if any(counters.values()):
             async with session_scope() as session:

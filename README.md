@@ -114,7 +114,7 @@ app/
 ├── routing/                  # (route resolution lives in repositories)
 ├── rules/                    # signal extraction, matching, rule engine
 ├── acknowledgements/         # targeting + acknowledgement service
-├── dispatch/                 # result dispatch outbox
+├── dispatch/                 # result dispatch outbox, store outbox + retry worker
 ├── reports/                  # statistics
 ├── admin/                    # admin screen rendering
 ├── audit/                    # (audit repository lives in database/)
@@ -127,7 +127,7 @@ app/
 ├── config/                   # settings
 └── utils/                    # enums, time, logging
 
-tests/                        # 161 tests against a real PostgreSQL
+tests/                        # 305 tests against a real PostgreSQL
 alembic/                      # migrations
 docker/entrypoint.sh          # wait for DB → migrate → exec app
 ```
@@ -277,13 +277,49 @@ bot reports progress back on the **original source message**:
 - The target status per result (`completed`, `cancelled`, …) and an optional
   order note are configured from the panel; the note supports `{order}`,
   `{number}` and `{status}`.
-- The store order is found by its number, with a fallback to the numeric id.
+- The store order is read by its numeric id first (a primary-key lookup) and
+  only searched for when a renumbering plugin makes the two differ.
 - Runs through the same outbox and claim-before-send pattern as result dispatch,
   so the store is updated **exactly once** per order even across a restart.
 - Skipped silently when disabled, when the order carries no store number, or when
   the order ends as `CONFLICT`.
-- A store failure is recorded and retried; it never changes the Telegram result.
+- A store failure never changes the Telegram result or the order's status.
 - The consumer secret is masked in the panel and never written to the audit log.
+
+### WooCommerce retries
+A store is a third party on the open internet: a timeout or a `502` says
+something about this second, not about the order. Failures are therefore split
+in two and treated oppositely.
+
+| | transient | permanent |
+|---|---|---|
+| examples | timeout, dropped connection, `429`, `500`–`504` | `401` bad keys, `404` unknown order, a status the store rejects |
+| immediately | retried on the spot (2s, 4s, …) | not retried |
+| afterwards | scheduled: 2, 4, 8, 16 … minutes, up to the attempt budget | left for an admin |
+| the admins | told once the budget is spent | told at once |
+
+- **Immediate retries** absorb most momentary failures before they ever become a
+  failed row — configurable, two by default.
+- **Scheduled retries** are driven by a background worker that inspects the queue
+  every 30 seconds; the delay itself lives on the row, so a restart never loses
+  or re-schedules it. Startup recovery runs the same pass.
+- **Exactly once still holds**: a retry re-claims the row, and the one call that
+  is not idempotent — adding an order note — checks the store's existing notes
+  before repeating itself.
+- **A call that dies mid-flight** (the process is killed between the claim and
+  the answer) is released after 20 minutes and retried.
+- **The first attempt runs inside the order pipeline**, so it is bounded by an
+  overall budget derived from the request timeout — a store that accepts the
+  connection and never answers cannot hang the handler.
+- **The admins get one alert per order**, when nothing is left to try, plus a
+  "it went through after all" message if a later attempt succeeds. Every failed
+  attempt can be announced instead, from the panel.
+- Everything above is editable from 🧾 محتوای نتیجه → 🔁 تلاش مجدد خودکار: on/off,
+  attempt budget (1–20), first delay (1–240 min), delay cap (1–1440 min), request
+  timeout (5–120 s), immediate retries (0–5) and the alert mode.
+- 🧾 محتوای نتیجه → 🛒 صف فروشگاه lists every store update that has not gone
+  through, with its attempt count, its next attempt and a retry button — and the
+  order screen carries the same button for a single order.
 
 ### Acknowledgement reactions
 - Configured independently for SUCCESS and FAILED (emoji, target, policy, retry).
@@ -497,8 +533,9 @@ Send `/start` as a super admin. The panel is in Persian and offers:
 
 `🔁 واکنش کانال مبدأ` configures the source-message reaction stages and the
 "in progress" emojis; `🧾 محتوای نتیجه` configures the appended result text, the
-result content mode and the WooCommerce connection. The store order number lives
-under `⚙️ تنظیمات`.
+result content mode, the WooCommerce connection, how a failed store update is
+retried (`🔁 تلاش مجدد خودکار`) and the queue of store updates still outstanding
+(`🛒 صف فروشگاه`). The store order number lives under `⚙️ تنظیمات`.
 
 ### Recommended order
 
@@ -518,7 +555,10 @@ under `⚙️ تنظیمات`.
    (received / in progress / success / failed) and the "in progress" emojis
    operators use in the work group.
 9. **🧾 محتوای نتیجه** — optional: the text appended per status, whether
-   operator attachments are forwarded, and the WooCommerce connection.
+   operator attachments are forwarded, and the WooCommerce connection. Its
+   `🔁 تلاش مجدد خودکار` screen tunes the retry of a failed store update; the
+   defaults (5 attempts over roughly half an hour, alert only at the end) suit
+   a normal store.
 10. **⚙️ تنظیمات** — optional: turn the store order number on, set its digit
     count, the rejection message and whether the refused post is deleted; and
     choose what happens to posts Telegram queued while the bot was down.
@@ -699,6 +739,22 @@ Success and failure rules matched simultaneously. Resolve it in
 🔎 Find Order → *Mark Success* / *Mark Failed*, and narrow the rules so the two
 cannot both fire.
 
+**The order says SUCCESS but the store still shows the old status.**
+Open 🔎 Find Order → the order and read its 🛒 فروشگاه section, or
+🧾 محتوای نتیجه → 🛒 صف فروشگاه for the whole queue. `FAILED` with a next
+attempt means the bot will try again by itself. `متوقف شده` means the store
+called the failure final — wrong consumer key (`401`), an order number that does
+not exist in the store (`404`), or a status slug WooCommerce rejects; fix that,
+then press the retry button. A store that is simply slow is better served by
+raising the request timeout in 🔁 تلاش مجدد خودکار than by retrying by hand.
+
+**A store update reports a timeout every time.**
+The default 30-second request timeout is generous for a healthy store, so a
+repeated timeout usually means the store itself is slow — an unindexed order
+search, an overloaded host, a firewall that drops the connection silently. Raise
+the timeout, and check that the bot's IP can reach `/wp-json/wc/v3/` at all with
+🧪 آزمایش اتصال.
+
 **Health check fails.**
 `curl http://127.0.0.1:8080/health` inside the container. `database: error` means
 the DSN or the database is wrong; `telegram_bot: initialising` means the token was
@@ -790,9 +846,12 @@ rather than being silently dropped.
 7. **Long polling only.** Webhooks would need a domain and TLS; the gateway and
    handler layers are unchanged by that switch.
 
-8. **Retries are bounded and in-process.** Failed dispatches and acknowledgements
-   are retried on the next pipeline run (manual retry from the panel, or startup
-   recovery). There is no background scheduler yet.
+8. **Retries are bounded and in-process.** The WooCommerce update has its own
+   scheduler: a background worker retries it on an exponential backoff, and the
+   whole policy is editable from the panel. Failed Telegram dispatches and
+   acknowledgements still wait for the next pipeline run (a new event on the
+   order, manual retry from the panel, or startup recovery) — the same treatment
+   could be extended to them.
 
 ### Future direction
 

@@ -231,9 +231,29 @@ class RecordingNotifier:
         self.events.append(("route_failed", (order_id, reason)))
 
     async def store_update_failed(
-        self, order_id: int, order_number: str, reason: str
+        self,
+        order_id: int,
+        order_number: str,
+        reason: str,
+        *,
+        next_attempt=None,
+        attempts: int = 1,
+        max_attempts: int = 1,
+        final: bool = True,
     ) -> None:
-        self.events.append(("store_update_failed", (order_id, order_number, reason)))
+        self.events.append(
+            (
+                "store_update_failed" if final else "store_update_retrying",
+                (order_id, order_number, reason),
+            )
+        )
+
+    async def store_update_recovered(
+        self, order_id: int, order_number: str, attempts: int
+    ) -> None:
+        self.events.append(
+            ("store_update_recovered", (order_id, order_number, attempts))
+        )
 
     def kinds(self) -> list[str]:
         return [kind for kind, _ in self.events]
@@ -248,21 +268,37 @@ class FakeWooCommerceClient:
 
     calls: list[dict] = []
     fail_with: str | None = None
+    #: Whether ``fail_with`` describes a failure no retry could fix.
+    fail_permanently: bool = False
+    #: Fail only while fewer than this many calls have been made, which is
+    #: how a store that is momentarily down behaves.
+    fail_times: int | None = None
+    attempts: int = 0
 
-    def __init__(self, credentials) -> None:
+    def __init__(self, credentials, *, timeout=None, quick_retries=None) -> None:
         self.credentials = credentials
+        self.timeout = timeout
+        self.quick_retries = quick_retries
 
-    async def update_order(self, order_number, *, status=None, note=None) -> int:
-        if type(self).fail_with:
+    async def update_order(
+        self, order_number, *, status=None, note=None, repeat_attempt=False
+    ) -> int:
+        cls = type(self)
+        cls.attempts += 1
+        failing = cls.fail_with and (
+            cls.fail_times is None or cls.attempts <= cls.fail_times
+        )
+        if failing:
             from app.integrations.woocommerce import WooCommerceError
 
-            raise WooCommerceError(type(self).fail_with)
-        type(self).calls.append(
+            raise WooCommerceError(cls.fail_with, permanent=cls.fail_permanently)
+        cls.calls.append(
             {
                 "order_number": order_number,
                 "status": status,
                 "note": note,
                 "base_url": self.credentials.base_url,
+                "repeat_attempt": repeat_attempt,
             }
         )
         return 4242
@@ -274,3 +310,6 @@ class FakeWooCommerceClient:
     def reset(cls) -> None:
         cls.calls = []
         cls.fail_with = None
+        cls.fail_permanently = False
+        cls.fail_times = None
+        cls.attempts = 0

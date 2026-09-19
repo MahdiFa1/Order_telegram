@@ -668,6 +668,19 @@ class WooCommerceCall(Base, IntPK, TimestampMixin):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When the automatic retry may claim this row again. NULL means "now":
+    #: a row that has never been attempted is due immediately.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Set when the store's answer says a repeat of the same call cannot
+    #: succeed (bad credentials, unknown order, rejected status). Such a row
+    #: is left to the admin instead of being retried on a schedule.
+    permanent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Whether the admins were already told about this failure, so a retry
+    #: schedule spanning an hour does not alert them once per attempt.
+    alerted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class RejectedMessage(Base, IntPK):

@@ -93,6 +93,10 @@ class SystemStatus:
     conflict_orders: int
     failed_dispatches: int
     failed_acknowledgements: int
+    #: Store updates still on the retry schedule, and ones nothing will
+    #: attempt again until an admin steps in.
+    store_updates_waiting: int = 0
+    store_updates_abandoned: int = 0
 
 
 class ReportService:
@@ -165,9 +169,16 @@ class ReportService:
         return reports
 
     async def system_status(self) -> SystemStatus:
+        from app.database.repositories import WooCommerceRepository
+        from app.dispatch.policy import load_store_policy
+
         async with session_scope() as session:
             orders = OrderRepository(session)
             acks = AcknowledgementRepository(session)
+            policy = await load_store_policy(session)
+            store_waiting, store_abandoned = await WooCommerceRepository(
+                session
+            ).counts(policy.max_attempts)
             return SystemStatus(
                 database_ok=True,
                 sources=await SourceChannelRepository(session).count_enabled(),
@@ -177,4 +188,6 @@ class ReportService:
                 conflict_orders=await orders.count_conflicts(),
                 failed_dispatches=await acks.count_failed_dispatches(),
                 failed_acknowledgements=await acks.count_failed_acknowledgements(),
+                store_updates_waiting=store_waiting,
+                store_updates_abandoned=store_abandoned,
             )

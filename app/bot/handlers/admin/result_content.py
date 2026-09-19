@@ -8,13 +8,18 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from app.admin import strings as t
+from app.admin import texts
+from app.audit.formatting import truncate
 from app.bot.filters import IsAdmin
 from app.bot.handlers.admin.common import render
 from app.bot.keyboards.admin import (
     append_text_detail,
     result_content_menu,
     result_mode_picker,
+    woo_alert_mode_picker,
     woo_detail,
+    woo_queue,
+    woo_retry_detail,
     woo_store_detail,
 )
 from app.bot.keyboards.callbacks import Nav, ResultCB
@@ -22,17 +27,62 @@ from app.bot.keyboards.common import back_keyboard
 from app.database.engine import session_scope
 from app.database.repositories import (
     AuditRepository,
+    OrderRepository,
     ResultConfigRepository,
     SettingRepository,
+    WooCommerceRepository,
 )
+from app.dispatch import policy as retry_policy
 from app.integrations.woocommerce import WooCommerceClient, WooCommerceCredentials
-from app.utils.enums import AuditEvent, OrderStatus, ResultContentMode, SettingKey
+from app.services.container import Services
+from app.utils.enums import (
+    AuditEvent,
+    OrderStatus,
+    ResultContentMode,
+    SettingKey,
+    StoreAlertMode,
+)
+from app.utils.time import utcnow
 
 router = Router(name="admin_result_content")
 
 
 class EditResultText(StatesGroup):
     waiting_for_value = State()
+
+
+class EditRetryNumber(StatesGroup):
+    waiting_for_value = State()
+
+
+#: Each editable number: the setting it writes, its bounds, and its prompt.
+RETRY_FIELDS: dict[str, tuple[str, tuple[int, int, int], str]] = {
+    "max": (
+        SettingKey.WOO_RETRY_MAX_ATTEMPTS,
+        retry_policy.MAX_ATTEMPTS,
+        t.WOO_RETRY_MAX_PROMPT,
+    ),
+    "base": (
+        SettingKey.WOO_RETRY_BASE_MINUTES,
+        retry_policy.BASE_MINUTES,
+        t.WOO_RETRY_BASE_PROMPT,
+    ),
+    "cap": (
+        SettingKey.WOO_RETRY_MAX_MINUTES,
+        retry_policy.MAX_MINUTES,
+        t.WOO_RETRY_CAP_PROMPT,
+    ),
+    "timeout": (
+        SettingKey.WOO_REQUEST_TIMEOUT,
+        retry_policy.REQUEST_TIMEOUT,
+        t.WOO_TIMEOUT_PROMPT,
+    ),
+    "quick": (
+        SettingKey.WOO_QUICK_RETRIES,
+        retry_policy.QUICK_RETRIES,
+        t.WOO_QUICK_PROMPT,
+    ),
+}
 
 
 @router.callback_query(Nav.filter(F.section == "result_content"), IsAdmin())
@@ -276,3 +326,177 @@ async def receive_value(message: Message, state: FSMContext) -> None:
     await state.clear()
     saved = t.APPEND_TEXT_SAVED if field == "append_text" else t.WOO_SAVED
     await message.answer(saved, reply_markup=result_content_menu(mode.value))
+
+
+# ---------------------------------------------------------------------------
+# Automatic retry of a failed store update
+# ---------------------------------------------------------------------------
+async def _show_retry(callback: CallbackQuery, note: str = "") -> None:
+    async with session_scope() as session:
+        policy = await retry_policy.load_store_policy(session)
+    text = texts.store_retry_screen(policy)
+    if note:
+        text += f"\n\n{note}"
+    await render(callback, text, woo_retry_detail(policy))
+
+
+@router.callback_query(ResultCB.filter(F.action == "retry_cfg"), IsAdmin())
+async def view_retry(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_retry(callback)
+
+
+@router.callback_query(ResultCB.filter(F.action == "retry_toggle"), IsAdmin())
+async def toggle_retry(callback: CallbackQuery) -> None:
+    async with session_scope() as session:
+        settings = SettingRepository(session)
+        enabled = await settings.get_bool(SettingKey.WOO_RETRY_ENABLED, default=True)
+        await settings.set(SettingKey.WOO_RETRY_ENABLED, "false" if enabled else "true")
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=callback.from_user.id,
+            message=f"WooCommerce automatic retry {'disabled' if enabled else 'enabled'}",
+        )
+    await _show_retry(callback)
+
+
+@router.callback_query(ResultCB.filter(F.action == "retry_set"), IsAdmin())
+async def prompt_retry_number(
+    callback: CallbackQuery, callback_data: ResultCB, state: FSMContext
+) -> None:
+    field = RETRY_FIELDS.get(callback_data.arg)
+    if field is None:
+        await callback.answer()
+        return
+    _key, (_default, low, high), prompt = field
+    await state.set_state(EditRetryNumber.waiting_for_value)
+    await state.update_data(field=callback_data.arg)
+    await render(
+        callback,
+        prompt.format(low=t.fa_digits(low), high=t.fa_digits(high)),
+        back_keyboard("result_content"),
+    )
+
+
+@router.message(EditRetryNumber.waiting_for_value, IsAdmin())
+async def receive_retry_number(message: Message, state: FSMContext) -> None:
+    from app.orders.order_number import normalise_digits
+
+    data = await state.get_data()
+    field = RETRY_FIELDS.get(data.get("field", ""))
+    if field is None:
+        await state.clear()
+        return
+    key, (_default, low, high), _prompt = field
+
+    try:
+        value = int(normalise_digits((message.text or "").strip()))
+    except ValueError:
+        value = -1
+    if not low <= value <= high:
+        await message.answer(
+            t.WOO_NUMBER_INVALID.format(low=t.fa_digits(low), high=t.fa_digits(high))
+        )
+        return
+
+    async with session_scope() as session:
+        await SettingRepository(session).set(key, str(value))
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=message.from_user.id if message.from_user else None,
+            message=f"WooCommerce setting {key} set to {value}",
+        )
+        mode = await SettingRepository(session).result_content_mode()
+    await state.clear()
+    await message.answer(t.WOO_RETRY_SAVED, reply_markup=result_content_menu(mode.value))
+
+
+@router.callback_query(ResultCB.filter(F.action == "alert_mode"), IsAdmin())
+async def prompt_alert_mode(callback: CallbackQuery) -> None:
+    await render(callback, t.WOO_ALERT_PROMPT, woo_alert_mode_picker())
+
+
+@router.callback_query(ResultCB.filter(F.action == "set_alert"), IsAdmin())
+async def set_alert_mode(callback: CallbackQuery, callback_data: ResultCB) -> None:
+    try:
+        mode = StoreAlertMode(callback_data.arg)
+    except ValueError:
+        await callback.answer()
+        return
+    async with session_scope() as session:
+        await SettingRepository(session).set(SettingKey.WOO_ALERT_MODE, mode.value)
+        await AuditRepository(session).log(
+            AuditEvent.CONFIGURATION_CHANGED,
+            actor_user_id=callback.from_user.id,
+            message=f"WooCommerce alert mode set to {mode.value}",
+        )
+    await _show_retry(callback)
+
+
+# ---------------------------------------------------------------------------
+# The queue of store updates that have not gone through
+# ---------------------------------------------------------------------------
+async def _show_queue(callback: CallbackQuery, note: str = "") -> None:
+    now = utcnow()
+    async with session_scope() as session:
+        policy = await retry_policy.load_store_policy(session)
+        store = WooCommerceRepository(session)
+        # One row and one retry button each: the keyboard shows the same ten.
+        calls = await store.list_unfinished(limit=10)
+        waiting, abandoned = await store.counts(policy.max_attempts)
+        orders = OrderRepository(session)
+        display_numbers = {}
+        for call in calls:
+            order = await orders.get(call.order_id)
+            if order is not None:
+                display_numbers[call.order_id] = order.display_number
+
+    text = texts.store_queue_screen(
+        calls, display_numbers, waiting, abandoned, policy.max_attempts, now
+    )
+    if note:
+        text += f"\n\n{note}"
+    await render(callback, truncate(text), woo_queue(calls, display_numbers))
+
+
+@router.callback_query(ResultCB.filter(F.action == "queue"), IsAdmin())
+async def view_queue(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_queue(callback)
+
+
+@router.callback_query(ResultCB.filter(F.action == "q_retry"), IsAdmin())
+async def retry_one(
+    callback: CallbackQuery, callback_data: ResultCB, services: Services
+) -> None:
+    if services.store is None or not callback_data.arg.isdigit():
+        await callback.answer()
+        return
+    order_id = int(callback_data.arg)
+    await callback.answer()
+    outcome = await services.store.retry_now(order_id)
+    async with session_scope() as session:
+        order = await OrderRepository(session).get(order_id)
+    display = order.display_number if order else str(order_id)
+    note = (
+        t.WOO_QUEUE_RETRIED.format(display=display)
+        if outcome.ok
+        else t.WOO_QUEUE_RETRY_FAILED.format(reason=outcome.reason[:200])
+    )
+    await _show_queue(callback, note)
+
+
+@router.callback_query(ResultCB.filter(F.action == "q_all"), IsAdmin())
+async def retry_all(callback: CallbackQuery, services: Services) -> None:
+    if services.store is None:
+        await callback.answer()
+        return
+    await callback.answer()
+    async with session_scope() as session:
+        calls = await WooCommerceRepository(session).list_unfinished(limit=10)
+    order_ids = [call.order_id for call in calls]
+    for order_id in order_ids:
+        await services.store.retry_now(order_id)
+    await _show_queue(
+        callback, t.WOO_QUEUE_RETRIED_ALL.format(count=t.fa_digits(len(order_ids)))
+    )
