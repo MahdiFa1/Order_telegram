@@ -693,6 +693,25 @@ Set `SKIP_BACKUP=true` to skip the backup step.
 
 On Coolify, press *Redeploy*; migrations run from the entrypoint.
 
+### Updating a Coolify deployment
+
+1. **Point the resource at the code you want.** *Configuration* → *Source* →
+   *Branch*. Deploying a feature branch is a one-field change; merging it into
+   the branch Coolify already tracks needs nothing here.
+2. **Press *Redeploy*.** Coolify pulls the branch, rebuilds the image and
+   starts the container.
+3. **Watch the logs** (*Logs* → `bot`). A healthy update prints, in order:
+   `running database migrations`, `migrations complete`, `bot_started`, and
+   then `retry_worker_started`.
+4. **Nothing else is required.** New schema is applied by `alembic upgrade
+   head` from the entrypoint, every new option has a working default, and no
+   environment variable was added — the whole retry policy lives in the
+   database and is edited from the panel.
+5. **If the bot does not come up**, the migration is the first thing to check:
+   `alembic current` via *Execute Command* on the `bot` service should print
+   the newest revision. The database volume is never dropped by an update, so
+   restoring from `backup.sh` is always available.
+
 ---
 
 ## Tests
